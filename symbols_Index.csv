@@ -1,0 +1,57 @@
+id,dispName,excToken,asset,symbol,availFlag
+IDX_-1_NSE,Nifty 50,-1,index,NIFTY,Y
+IDX_-20_NSE,BANKNIFTY,-20,index,BANKNIFTY,Y
+IDX_-51_BSE,SENSEX,-51,index,SENSEX,Y
+IDX_-21_NSE,FINNIFTY,-21,index,FINNIFTY,Y
+IDX_-15_NSE,India VIX,-15,index,India VIX,N
+IDX_-2_NSE,Nifty Next 50,-2,index,NIFTYNXT50,Y
+IDX_-8_NSE,MIDCPNIFTY 100,-8,index,NIFTY MIDCAP 100,Y
+IDX_-11_NSE,SMLCPNIFTY 100,-11,index,NIFTY SMLCAP 100,Y
+IDX_-19_NSE,Nifty Auto,-19,index,Nifty Auto,Y
+IDX_-24_NSE,Nifty IT,-24,index,Nifty IT,Y
+IDX_-26_NSE,Nifty Metal,-26,index,Nifty Metal,Y
+IDX_-27_NSE,Nifty Pharma,-27,index,Nifty Pharma,Y
+IDX_-32_NSE,Nifty Oil&Gas,-32,index,NIFTY OIL AND GAS,Y
+IDX_-34_NSE,Nifty Energy,-34,index,Nifty Energy,Y
+IDX_-18_NSE,MIDCPNIFTY,-18,index,MIDCPNIFTY,Y
+IDX_-7_NSE,MIDCPNIFTY 50,-7,index,Nifty Midcap 50,Y
+IDX_-3_NSE,Nifty 100,-3,index,Nifty 100,Y
+IDX_-4_NSE,Nifty 200,-4,index,Nifty 200,Y
+IDX_-38_NSE,Nifty Commodity,-38,index,Nifty Commodities,Y
+IDX_-40_NSE,Nifty Consumption,-40,index,Nifty Consumption,Y
+IDX_-22_NSE,Nifty FMCG,-22,index,Nifty FMCG,Y
+IDX_-23_NSE,Nifty HealthCare,-23,index,NIFTY HEALTHCARE,Y
+IDX_-43_NSE,NIFTY INDIA MFG,-43,index,NIFTY INDIA MFG,Y
+IDX_-33_NSE,Nifty Infra,-33,index,Nifty Infra,Y
+IDX_-25_NSE,Nifty Media,-25,index,Nifty Media,Y
+IDX_-49_NSE,Nifty MidSml Hlth,-49,index,Nifty MidSml Hlth,Y
+IDX_-35_NSE,Nifty MNC,-35,index,Nifty MNC,Y
+IDX_-36_NSE,Nifty PSE,-36,index,Nifty PSE,Y
+IDX_-29_NSE,Nifty PSUBank,-29,index,Nifty PSU Bank,Y
+IDX_-28_NSE,Nifty PvtBank,-28,index,Nifty Pvt Bank,Y
+IDX_-50_NSE,Nifty Tata 25 Cap,-50,index,Nifty Tata 25 Cap,Y
+IDX_-10_NSE,SMLCPNIFTY 50,-10,index,NIFTY SMLCAP 50,Y
+IDX_-94_BSE,BANKEX,-94,index,BANKEX,Y
+IDX_-72_BSE,BSE 100,-72,index,BSE100,Y
+IDX_-55_BSE,BSE 200,-55,index,BSE200,Y
+IDX_-90_BSE,BSE AUTO,-90,index,AUTO,Y
+IDX_-67_BSE,BSE Energy,-67,index,ENERGY,Y
+IDX_-80_BSE,BSE EVI,-80,index,BSEEVI,Y
+IDX_-66_BSE,BSE Finance,-66,index,FIN,Y
+IDX_-85_BSE,BSE FMCG,-85,index,BSEFMC,Y
+IDX_-22_BSE,BSE GREENEX,-22,index,GREENX,Y
+IDX_-64_BSE,BSE Healthcare,-64,index,BSE HC,Y
+IDX_-68_BSE,BSE Infra,-68,index,INFRA,Y
+IDX_-87_BSE,BSE IPO,-87,index,BSEIPO,Y
+IDX_-53_BSE,BSE IT,-53,index,BSE IT,Y
+IDX_-78_BSE,BSE LRGCAP,-78,index,LRGCAP,Y
+IDX_-93_BSE,BSE Manufacturing,-93,index,MFG,Y
+IDX_-60_BSE,BSE MDCAP,-60,index,MIDCAP,Y
+IDX_-102_BSE,BSE METAL,-102,index,METAL,Y
+IDX_-101_BSE,BSE OIL & GAS,-101,index,OILGAS,Y
+IDX_-84_BSE,BSE POWER,-84,index,POWER,Y
+IDX_-96_BSE,BSE Prv Banks,-96,index,BSEPBI,Y
+IDX_-97_BSE,BSE PSU,-97,index,BSEPSU,Y
+IDX_-54_BSE,BSE SMLCAP,-54,index,SMLCAP,Y
+IDX_-99_BSE,BSE Telecom,-99,index,TELCOM,Y
+IDX_-79_BSE,SENSEX Next 50,-79,index,SNXT50,Y
