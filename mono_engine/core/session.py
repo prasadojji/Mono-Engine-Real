@@ -1,3 +1,6 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Adds mono_engine root to path
 import requests
 from requests.exceptions import HTTPError
 

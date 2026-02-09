@@ -1,0 +1,23 @@
+credentials:
+  apikey: "462b2e0a4cd4cf728ea3af8341092a87"          # Replace with your real Tradejini API key
+  password: "2025"      # Replace with your account password
+  #two_fa: "YOUR_2FA_HERE"             # e.g., TOTP code or answer (if required by SDK)
+  two_fa_type: "TOTP"                 # Adjust based on your SDK (common: TOTP, SMS, etc.)
+
+endpoints:
+  base_url: "https://api.tradejini.com/v2"   # Default Tradejini base (adjust if your SDK uses different)
+  ws_url: "wss://api.tradejini.com/ws"       # WebSocket URL (adjust if needed)
+
+enabled_modules:
+  #- order
+  - portfolio
+  - market_data
+  #- risk     # Uncomment later when we add it
+
+logging_level: INFO
+
+other:
+  # Custom settings for future use
+  max_positions: 10
+
+  
