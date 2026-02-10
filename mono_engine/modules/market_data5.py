@@ -34,15 +34,13 @@ class MarketData(BaseModule):
         self.sensex_spot_token = None
         self.watchlist = []  # List of dicts {'strike': int, 'type': str, 'token': str, 'symbol': str}
         self.token_to_scrip = {}  # NEW: Map token to user-friendly scrip name
-        # MOD: Load watchlist moved to workflow (after expiry compute)
+        self._load_watchlist()  # Load persistent watchlist
 
     def _load_watchlist(self):
         if os.path.exists(watchlist_file):
             with open(watchlist_file, 'r') as f:
                 self.watchlist = json.load(f)
             logging.info(f"Loaded {len(self.watchlist)} items from watchlist.json")
-        else:
-            self.watchlist = []
 
     def _save_watchlist(self):
         with open(watchlist_file, 'w') as f:
@@ -79,7 +77,6 @@ class MarketData(BaseModule):
             # NEW: If symbol is in selected_symbols (watchlist), display updated table
             if symbol in self.selected_symbols:
                 self._display_watchlist_tick_table()
-
     def get_scrip_details(self, symbol):
         """Fetch token/lot for symbol from Tradejini API/cache."""
         try:
@@ -88,7 +85,7 @@ class MarketData(BaseModule):
             return {'token': '12345', 'lot_size': 50}  # Real: parse resp for symbol
         except:
             return {'token': 'mock_token', 'lot_size': 50}
-
+        
     def _display_watchlist_tick_table(self):
         extended_table = []
         for item in self.watchlist + [{'strike': None, 'type': 'SPOT', 'token': self.sensex_spot_token, 'symbol': 'SENSEX_SPOT'}]:  # Include spot
@@ -233,7 +230,7 @@ class MarketData(BaseModule):
                         sensex_options[(expiry, strike, opt_type)] = token
                         symbol_map[token] = row['id']  # Full symbol like SENSEX_2026-02-12_83000_CE
 
-        # MOD: Compute nearest weekly expiry early (before load watchlist)
+        # Nearest weekly expiry (exact as script)
         today = datetime.now()
         expiries = sorted(set(k[0] for k in sensex_options.keys()))
         weekly_expiries = []
@@ -256,18 +253,6 @@ class MarketData(BaseModule):
         if not target_expiry:
             logging.error("No expiries found — manual input required")
             return
-
-        # MOD: Now load watchlist and check/reset for new week/expiry
-        self._load_watchlist()
-        if self.watchlist:
-            # Check if expiry matches (handle old JSON without 'expiry')
-            saved_expiry = self.watchlist[0].get('expiry')
-            if saved_expiry != target_expiry:
-                logging.info(f"Cleared old watchlist (expiry {saved_expiry}) for new week/expiry {target_expiry}")
-                self.watchlist = []
-                # Optional: Delete file to clean slate
-                if os.path.exists(watchlist_file):
-                    os.remove(watchlist_file)
 
         # Build table data with row numbers (for selection)
         table_data = []
@@ -314,7 +299,7 @@ class MarketData(BaseModule):
                 strike, opt_type, token = row_map[r]
                 symbol = symbol_map.get(token, f"SENSEX_{target_expiry}_{strike}_{opt_type}")
                 if symbol not in existing_symbols:
-                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol, 'expiry': target_expiry})  # MOD: Add expiry
+                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol})
                     existing_symbols.add(symbol)
                 selected_tokens.append(token)
                 symbol_to_token[symbol] = token
@@ -407,7 +392,7 @@ class MarketData(BaseModule):
                 for r in add_rows:
                     if 1 <= r <= len(proposals):
                         item = proposals[r-1]
-                        self.watchlist.append({'strike': item['strike'], 'type': 'CE', 'token': item['token'], 'symbol': item['symbol'], 'expiry': target_expiry})  # MOD: Add expiry
+                        self.watchlist.append({'strike': item['strike'], 'type': 'CE', 'token': item['token'], 'symbol': item['symbol']})
                         selected_tokens.append(item['token'])
                         symbol_to_token[item['symbol']] = item['token']
                         self.token_to_scrip[item['token']] = f"{item['strike']}CE"  # Update map for new additions

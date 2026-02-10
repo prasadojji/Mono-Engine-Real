@@ -1,0 +1,6 @@
+{
+    "chat.tools.urls.autoApprove": {},
+    "grokIntegration.cacheMaxItems": 1000,
+    "grokIntegration.model": "grok-code-fast-1",
+    "grokIntegration.enableCache": true
+}

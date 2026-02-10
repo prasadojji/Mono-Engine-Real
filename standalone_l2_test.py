@@ -1,16 +1,16 @@
-import websocket
-import threading
+import logging
 import time
-import struct
-import zlib
-import traceback
-import errno
+from datetime import datetime
+from pytz import timezone
+from tabulate import tabulate
 import json
 import re
-import os
-import sys
-from datetime import datetime
+import struct
+import zlib
+import threading
+import websocket
 
+# SDK constants and functions (from nxtradstream.py)
 CURRENT_VERSION = 1
 PKG_VERSION = '1.0.2'
 
@@ -20,17 +20,14 @@ def commafmt(value, precision=2):
     parts[0] = re.sub(r"\B(?=(\d{3})+(?!\d))", ",", parts[0])
     return ".".join(parts)
 
-
 def divide(value, divisor=100.0):
     return value / float(divisor)
-
 
 def datefmt(value):
     if value is None:
         return value
     date_time = datetime.fromtimestamp(value)
     return str(date_time)
-
 
 L1 = "L1"
 L5 = "L5"
@@ -64,7 +61,7 @@ PKT_TYPE = {
     17: GREEKS
 }
 
-# spec format :: 67: {  "struct":"d", "key": "ltp", "len": 8, "fmt": lambda v, p :  commafmt(v, p) },
+# DEFAULT_PKT_INFO (full from your DOCUMENT)
 DEFAULT_PKT_INFO = {
     "PKT_SPEC": {
         10: {
@@ -142,7 +139,6 @@ DEFAULT_PKT_INFO = {
         },
         15: {
             56: {"struct": "H", "key": "nLen", "len": 2},
-            # length will be dynamiccaly altered from message
             61: {"struct": "string", "key": "message", "len": 100},
         },
         16: {
@@ -166,7 +162,7 @@ DEFAULT_PKT_INFO = {
     "MARKET_STATUS_OBJ_LEN": 2
 }
 
-
+# Full NxtradStream class (with proper indentation)
 class NxtradStream:
     def __init__(self, url, version='3.1', stream_cb=None, connect_cb=None):
         self.ws = None
@@ -196,7 +192,7 @@ class NxtradStream:
 
     def __tryConnect(self):
         url = self.host + "?token=" + self.token + "&version=" + self.version
-        # websocket.enableTrace(True)
+        websocket.enableTrace(True)
         self.ws = websocket.WebSocketApp(
             url,
             on_open=self.__on_open,
@@ -394,7 +390,6 @@ class NxtradStream:
         return res
 
     def __onsinglePacket(self, data, data_len):
-        print(f"Received packet type: {pktType} ({PKT_TYPE.get(pktType, 'Unknown')}) for symbol/token: {struct.unpack('i', data[4:8])[0] if pktType in [10,11,17] else 'N/A'}")
         pktType = struct.unpack("b", data[2:3])[0]
         pktSpec = DEFAULT_PKT_INFO["PKT_SPEC"]
         if pktType not in pktSpec:
@@ -466,7 +461,6 @@ class NxtradStream:
         return jData
 
     def __decodeL2PKT(self, pktSpec, data_len, data):
-        print("Decoding L2 (L5) packet")
         exchange_info = None
         raw_data = {}
         divisor = 100.0
@@ -666,3 +660,74 @@ class NxtradStream:
                 callback(*args)
             except Exception as e:
                 print("Error in Calling callback {}: {}".format(callback, e))
+
+# Callback for connection status
+def connect_cb(stream, data):
+    print(f"Connection status: {data}")
+
+# Callback for stream data
+def stream_cb(stream, data):
+    print(f"Stream data: {data}")
+
+    # If it's L1 or L5, print table
+    if 'msgType' in data:
+        symbol = data.get('symbol', 'N/A')
+        ltt = data.get('ltt', 'N/A')
+        ltp = data.get('ltp', 'N/A')
+        chng = data.get('chng', 'N/A')
+        chngPer = data.get('chngPer', 'N/A')
+        open_val = data.get('open', 'N/A')
+        high = data.get('high', 'N/A')
+        low = data.get('low', 'N/A')
+        close = data.get('close', 'N/A')
+        vol = data.get('vol', 'N/A')
+        oi = data.get('OI', 'N/A')
+        bidPrice = data.get('bidPrice', 'N/A')
+        askPrice = data.get('askPrice', 'N/A')
+        qty = data.get('qty', 'N/A')
+        totBuyQty = data.get('totBuyQty', 'N/A')
+        totSellQty = data.get('totSellQty', 'N/A')
+
+        row = [
+            [symbol, ltt, ltp, chng, chngPer, f"{open_val}/{high}/{low}/{close}", vol, oi, f"{bidPrice}x{qty}", f"{askPrice}x{qty}", f"Bids: {totBuyQty} | Asks: {totSellQty}"]
+        ]
+
+        headers = ["Symbol", "Last Time", "LTP", "Change", "% Change", "OHLC", "Volume", "OI", "Best Bid", "Best Ask", "Depth"]
+
+        now_ist = datetime.now(timezone('Asia/Kolkata')).strftime('%Y-%m-%d %H:%M:%S')
+        print(f"\n=== Updated Tick Data ({now_ist}) ===")
+        print(tabulate(row, headers=headers, tablefmt="grid"))
+
+        # If L2 (L5), print full depth
+        if data['msgType'] == 'L5' and 'bid' in data and isinstance(data['bid'], list) and data['bid']:
+            bid_table = [[b.get('price', 'N/A'), b.get('qty', 'N/A'), b.get('no', 'N/A')] for b in data['bid']]
+            ask_table = [[a.get('price', 'N/A'), a.get('qty', 'N/A'), a.get('no', 'N/A')] for a in data['ask']]
+            
+            print(f"\n=== Full L2 Bid Depth for {symbol} ({now_ist}) ===")
+            print(tabulate(bid_table, headers=["Bid Price", "Bid Qty", "Bid Orders"], tablefmt="grid"))
+            
+            print(f"\n=== Full L2 Ask Depth for {symbol} ({now_ist}) ===")
+            print(tabulate(ask_table, headers=["Ask Price", "Ask Qty", "Ask Orders"], tablefmt="grid"))
+
+# Prompt for auth_token at runtime
+auth_token = input("Enter your auth_token (APIkey:accessToken): ").strip()
+#print(f"Full auth_token: {api_key}:{access_token}")
+
+# Initialize and connect to Tradejini stream
+stream = NxtradStream(url="api.tradejini.com", version='3.1', stream_cb=stream_cb, connect_cb=connect_cb)
+stream.connect(auth_token)
+
+# Wait for connection and subscribe
+time.sleep(2)  # Give time to connect
+
+if stream.isConnected:
+    test_symbols = ['831199_BFO', '831435_BFO', '831669_BFO', '-51_BSE']
+    stream.subscribeL1(test_symbols)
+    stream.subscribeL2SnapShot(test_symbols)
+    stream.subscribeL2(test_symbols)
+    print(f"Subscribed to {test_symbols}")
+
+# Run for 300 seconds to receive data
+time.sleep(300)
+
+stream.disconnect()

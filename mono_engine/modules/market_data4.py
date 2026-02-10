@@ -33,16 +33,13 @@ class MarketData(BaseModule):
         self.selected_symbols = []
         self.sensex_spot_token = None
         self.watchlist = []  # List of dicts {'strike': int, 'type': str, 'token': str, 'symbol': str}
-        self.token_to_scrip = {}  # NEW: Map token to user-friendly scrip name
-        # MOD: Load watchlist moved to workflow (after expiry compute)
+        self._load_watchlist()  # Load persistent watchlist
 
     def _load_watchlist(self):
         if os.path.exists(watchlist_file):
             with open(watchlist_file, 'r') as f:
                 self.watchlist = json.load(f)
             logging.info(f"Loaded {len(self.watchlist)} items from watchlist.json")
-        else:
-            self.watchlist = []
 
     def _save_watchlist(self):
         with open(watchlist_file, 'w') as f:
@@ -67,6 +64,7 @@ class MarketData(BaseModule):
     def _on_tick(self, tick):
         symbol = tick.get('symbol')
         if symbol:
+            logging.info(f"Tick received for {symbol}: {tick}")  # Log the entire tick for debugging
             self.quotes[symbol].update(tick)
             # Capture spot open as soon as a valid tick arrives (safeguard if loop misses it)
             spot_symbol = f"{self.sensex_spot_token}_BSE"
@@ -75,67 +73,6 @@ class MarketData(BaseModule):
                 with open(cache_file, 'w') as f:
                     f.write(str(self.spot_open))
                 logging.info(f"Captured SENSEX open from tick: {self.spot_open}")
-
-            # NEW: If symbol is in selected_symbols (watchlist), display updated table
-            if symbol in self.selected_symbols:
-                self._display_watchlist_tick_table()
-
-    def get_scrip_details(self, symbol):
-        """Fetch token/lot for symbol from Tradejini API/cache."""
-        try:
-            resp = self.engine.session.rest.get("/api/master/symbols")  # Adapt to Tradejini endpoint for symbol master
-            # Parse for symbol (mock for test)
-            return {'token': '12345', 'lot_size': 50}  # Real: parse resp for symbol
-        except:
-            return {'token': 'mock_token', 'lot_size': 50}
-
-    def _display_watchlist_tick_table(self):
-        extended_table = []
-        for item in self.watchlist + [{'strike': None, 'type': 'SPOT', 'token': self.sensex_spot_token, 'symbol': 'SENSEX_SPOT'}]:  # Include spot
-            token = item['token']
-            quote = self.quotes.get(f"{token}_BSE" if item['strike'] is None else f"{token}_BFO", {})
-            
-            # User-friendly scrip name
-            scrip = "SENSEX" if item['strike'] is None else f"{item['strike']}{item['type']}"
-
-            # Extract key data from tick/quote
-            ltt = quote.get('ltt', 'N/A')  # Last trade time
-            ltp = quote.get('ltp', 'N/A')
-            chng = quote.get('chng', 'N/A')
-            chngPer = quote.get('chngPer', 'N/A')
-            open_val = quote.get('open', 'N/A')
-            high = quote.get('high', 'N/A')
-            low = quote.get('low', 'N/A')
-            close = quote.get('close', 'N/A')
-            vol = quote.get('vol', 'N/A')
-            oi = quote.get('OI', 'N/A')
-            bidPrice = quote.get('bidPrice', 'N/A')
-            askPrice = quote.get('askPrice', 'N/A')
-            qty = quote.get('qty', 'N/A')  # Assuming qty is for bid/ask
-            totBuyQty = quote.get('totBuyQty', 'N/A')
-            totSellQty = quote.get('totSellQty', 'N/A')
-
-            row = [
-                scrip,
-                ltt,
-                ltp,
-                chng,
-                chngPer,
-                f"{open_val}/{high}/{low}/{close}",
-                vol,
-                oi,
-                f"{bidPrice}x{qty}",
-                f"{askPrice}x{qty}",
-                f"Bids: {totBuyQty} | Asks: {totSellQty}"
-            ]
-            extended_table.append(row)
-
-        headers = [
-            "Scrip", "Last Time", "LTP", "Change", "% Change", "OHLC",
-            "Volume", "OI", "Best Bid", "Best Ask", "Depth"
-        ]
-        print("\n=== Updated Watchlist Tick Data ===")
-        print(tabulate(extended_table, headers=headers, tablefmt="grid"))
 
     def _sensex_options_workflow(self):
         # Broker API setup (public for symbol master)
@@ -233,7 +170,7 @@ class MarketData(BaseModule):
                         sensex_options[(expiry, strike, opt_type)] = token
                         symbol_map[token] = row['id']  # Full symbol like SENSEX_2026-02-12_83000_CE
 
-        # MOD: Compute nearest weekly expiry early (before load watchlist)
+        # Nearest weekly expiry (exact as script)
         today = datetime.now()
         expiries = sorted(set(k[0] for k in sensex_options.keys()))
         weekly_expiries = []
@@ -256,18 +193,6 @@ class MarketData(BaseModule):
         if not target_expiry:
             logging.error("No expiries found — manual input required")
             return
-
-        # MOD: Now load watchlist and check/reset for new week/expiry
-        self._load_watchlist()
-        if self.watchlist:
-            # Check if expiry matches (handle old JSON without 'expiry')
-            saved_expiry = self.watchlist[0].get('expiry')
-            if saved_expiry != target_expiry:
-                logging.info(f"Cleared old watchlist (expiry {saved_expiry}) for new week/expiry {target_expiry}")
-                self.watchlist = []
-                # Optional: Delete file to clean slate
-                if os.path.exists(watchlist_file):
-                    os.remove(watchlist_file)
 
         # Build table data with row numbers (for selection)
         table_data = []
@@ -314,15 +239,10 @@ class MarketData(BaseModule):
                 strike, opt_type, token = row_map[r]
                 symbol = symbol_map.get(token, f"SENSEX_{target_expiry}_{strike}_{opt_type}")
                 if symbol not in existing_symbols:
-                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol, 'expiry': target_expiry})  # MOD: Add expiry
+                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol})
                     existing_symbols.add(symbol)
                 selected_tokens.append(token)
                 symbol_to_token[symbol] = token
-                # NEW: Populate token_to_scrip
-                self.token_to_scrip[token] = f"{strike}{opt_type}"
-
-        # For spot
-        self.token_to_scrip[self.sensex_spot_token] = "SENSEX"
 
         # Dedupe tokens
         selected_tokens = list(set(selected_tokens))
@@ -407,10 +327,9 @@ class MarketData(BaseModule):
                 for r in add_rows:
                     if 1 <= r <= len(proposals):
                         item = proposals[r-1]
-                        self.watchlist.append({'strike': item['strike'], 'type': 'CE', 'token': item['token'], 'symbol': item['symbol'], 'expiry': target_expiry})  # MOD: Add expiry
+                        self.watchlist.append({'strike': item['strike'], 'type': 'CE', 'token': item['token'], 'symbol': item['symbol']})
                         selected_tokens.append(item['token'])
                         symbol_to_token[item['symbol']] = item['token']
-                        self.token_to_scrip[item['token']] = f"{item['strike']}CE"  # Update map for new additions
 
                 if add_rows:
                     selected_tokens = list(set(selected_tokens))  # Dedupe
@@ -429,9 +348,67 @@ class MarketData(BaseModule):
             self.streamer.subscribe_greeks(option_tokens)
         logging.info(f"Monitoring {len(self.selected_symbols)} symbols with greeks")
 
+        # Display extended data (no additional delay as per request)
+        self._display_watchlist_data(target_expiry, symbol_to_token)
+
         # Additional script notes in logs
         logging.info("\nFully Broker-Auto (Tradejini):")
         logging.info("- Symbol master (Index + BSEOptions): Direct from Tradejini public API.")
         logging.info("- Open price: Cached from broker streamer packet (captured on trading days).")
         logging.info("- On Sunday/weekend: Uses last trading day's open.")
         logging.info("- On trading day: Streamer auto-captures/saves today's open from SENSEX packet.")
+
+    def _display_watchlist_data(self, expiry, symbol_to_token):
+        extended_table = []
+        for item in self.watchlist + [{'strike': None, 'type': 'SPOT', 'token': self.sensex_spot_token, 'symbol': 'SENSEX_SPOT'}]:
+            sym = item['symbol']
+            token = item['token']
+            quote = self.quotes.get(f"{token}_BSE" if 'SPOT' in sym else f"{token}_BFO", {})
+            
+            # === USER-FRIENDLY SCRIP NAME ===
+            if item['strike'] is None:                     # Spot
+                scrip = "SENSEX"
+            else:
+                scrip = f"{item['strike']}{item['type']}"   # e.g. 84300CE or 84300PE
+
+            # Extract data with correct Tradejini field names
+            ltp = quote.get('ltp', 'N/A')
+            o   = quote.get('open', 'N/A')
+            h   = quote.get('high', 'N/A')
+            l   = quote.get('low', 'N/A')
+            c   = quote.get('close', 'N/A')
+            vol = quote.get('vol', 'N/A')                   # Tradejini uses 'vol'
+            bid = f"{quote.get('bidPrice', 'N/A')}x{quote.get('qty', 'N/A')}"
+            ask = f"{quote.get('askPrice', 'N/A')}x{quote.get('qty', 'N/A')}"
+            delta = quote.get('delta', 'N/A')
+            gamma = quote.get('gamma', 'N/A')
+            theta = quote.get('theta', 'N/A')
+            vega  = quote.get('vega', 'N/A')
+            iv    = quote.get('iv', 'N/A')
+            depth_str = f"Bids: {quote.get('totBuyQty', 'N/A')} | Asks: {quote.get('totSellQty', 'N/A')}"
+
+            row = [
+                scrip,                      # ← clean name: 84300CE, 84300PE, SENSEX
+                ltp,
+                f"{o}/{h}/{l}/{c}",
+                vol,
+                bid,
+                ask,
+                delta,
+                gamma,
+                theta,
+                vega,
+                iv,
+                depth_str
+            ]
+            extended_table.append(row)
+
+        headers = [
+            "Scrip", "LTP", "OHLC", "Volume", "Best Bid", "Best Ask",
+            "Delta", "Gamma", "Theta", "Vega", "IV", "Depth (Totals)"
+        ]
+
+        print("\n=== Watchlist Market Data ===")
+        print(tabulate(extended_table, headers=headers, tablefmt="grid"))
+        logging.info("\nWatchlist Market Data:")
+        logging.info(tabulate(extended_table, headers=headers, tablefmt="plain"))

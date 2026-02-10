@@ -11,8 +11,25 @@ class Portfolio(BaseModule):
 
     def __init__(self, engine):
         super().__init__(engine)
+        self.logger = logging.getLogger(__name__)
         self.positions = {}  # netQty, avgPrice, unrealizedPnl, etc. by symbol
         self.funds = {}      # availCash, availMargin, etc.
+
+    def get_positions(self):
+        """Fetch current positions from Tradejini API."""
+        try:
+            resp = self.session.rest.get("/api/oms/positions")  # Use self.session to match _fetch_positions
+            status = resp.get("s", "").lower()
+            if status == "ok":
+                positions = resp.get("d", [])  # List of position dicts (e.g., [{'scrip': 'sym', 'net_qty': int, 'avg_price': float, ...}])
+                self.logger.info(f"Fetched {len(positions)} positions.")
+                return positions
+            else:
+                self.logger.error(f"Positions fetch failed: {resp}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Positions fetch error: {e}")
+            return []
 
     def start(self):
         logging.info("Portfolio module starting — subscribing to updates")

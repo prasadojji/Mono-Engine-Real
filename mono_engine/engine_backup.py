@@ -1,4 +1,3 @@
-# mono_engine/engine.py
 import logging
 import importlib
 import time
@@ -18,47 +17,30 @@ class MonoEngine:
         self.session = Session(self.config)
         self.streamer = Streamer(self.session, self.events)
 
-        self.modules = {}  # Changed to dict for keyed access
+        self.modules = []
 
     def _load_modules(self):
-        # Mapping for module_name to actual class name (adjust for your modules)
-        class_map = {
-            'order': 'Order',
-            'portfolio': 'Portfolio',  # Assuming your existing portfolio.py class name
-            'state': 'StateModule',    # For state.py
-            'market_data': 'MarketData'    
-            # Add others like 'market_data': 'MarketData' if needed
-        }
         for module_name in self.config.enabled_modules:
             try:
                 module_path = f"mono_engine.modules.{module_name}"
                 module = importlib.import_module(module_path)
-                class_name = class_map.get(module_name)
-                if class_name and hasattr(module, class_name):
+                # Class name: title case, no underscore (e.g., market_data -> MarketData)
+                class_name = module_name.replace("_", " ").title().replace(" ", "")
+                if hasattr(module, class_name):
                     module_class = getattr(module, class_name)
                     module_instance = module_class(self)
-                    self.modules[module_name] = module_instance  # Use dict
+                    self.modules.append(module_instance)
                     logging.info(f"Loaded module: {module_name} ({class_name})")
                 else:
-                    logging.error(f"Module {module_name} has no class {class_name or 'unknown'}")
+                    logging.error(f"Module {module_name} has no class {class_name}")
             except Exception as e:
                 logging.error(f"Failed to load module {module_name}: {e}")
 
-        # Start modules (order matters if dependencies; e.g., state before order)
-        for module_name in ['state', 'order']:  # Prioritize if needed; else loop all
-            if module_name in self.modules:
-                try:
-                    self.modules[module_name].start()
-                except Exception as e:
-                    logging.error(f"Error starting module {module_name}: {e}")
-
-        # Start remaining modules
-        for module_name, module in self.modules.items():
-            if module_name not in ['state', 'order']:
-                try:
-                    module.start()
-                except Exception as e:
-                    logging.error(f"Error starting module {module_name}: {e}")
+        for module in self.modules:
+            try:
+                module.start()
+            except Exception as e:
+                logging.error(f"Error starting module {module.__class__.__name__}: {e}")
 
     def login(self) -> bool:
         two_fa = input("\nEnter FRESH 6-digit 2FA code (generate now!): ").strip()
@@ -81,7 +63,7 @@ class MonoEngine:
 
     def stop(self):
         logging.info("Stopping MonoEngine")
-        for module in self.modules.values():  # Updated to .values() for dict
+        for module in self.modules:
             try:
                 module.stop()
             except Exception as e:

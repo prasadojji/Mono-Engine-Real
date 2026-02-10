@@ -9,15 +9,33 @@ endpoints:
   ws_url: "wss://api.tradejini.com/ws"       # WebSocket URL (adjust if needed)
 
 enabled_modules:
-  #- order
-  - portfolio
-  - market_data
-  #- risk     # Uncomment later when we add it
+  - order     # Module 8 (execution)
+  - portfolio # Existing (for sync in state.py)
+  - state     # Module 7 (state engine)
+  - market_data  # Uncomment if needed for scrip selection
+  # - risk         # For future
+
+# New params for modules 7/8 (options trading focus)
+scrip: OPTIDX_SENSEX_BFO_2026-02-12_84500_PE  # Test option symbol (replace with real)
+exchange_token: 12345     # Mock/real token from scrip selection (if needed; optional for now)
+lot_size: 50              # Default NIFTY lot size
+retry_attempts: 3         # For order retries
+retry_delay: 1            # Seconds between retries
 
 logging_level: INFO
 
 other:
   # Custom settings for future use
   max_positions: 10
+  # ... existing content ...
+
+other:
+  # Custom settings for future use
+  max_positions: 10
+  scrip: OPTIDX_SENSEX_BFO_2026-02-12_84500_PE  # Test option symbol
+  exchange_token: 12345     # Mock/real token (optional)
+  lot_size: 50              # Default NIFTY lot
+  retry_attempts: 3
+  retry_delay: 1
 
   

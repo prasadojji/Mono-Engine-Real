@@ -29,6 +29,19 @@ class Config:
         missing = [k for k in required if k not in self.credentials or not self.credentials[k]]
         if missing:
             raise ValueError(f"Missing required Tradejini credentials in config: {missing}")
+        
+    def get(self, key, default=None):
+        """General get method to search all config attributes/dicts."""
+        # Check root attributes first
+        if hasattr(self, key):
+            return getattr(self, key, default)
+        # Search sub-dicts like credentials, endpoints, other
+        for attr in ['credentials', 'endpoints', 'other']:
+            if hasattr(self, attr):
+                val = getattr(self, attr)
+                if isinstance(val, dict) and key in val:
+                    return val.get(key, default)
+        return default
 
     @classmethod
     def load(cls, config_path: str = 'config.yaml') -> 'Config':
