@@ -14,7 +14,7 @@ class Streamer:
         self.connected = False
 
     def _stream_callback(self, nx_stream, data):
-        logging.debug("Stream data received: %s", data)
+        logging.info("Stream data received: %s", data)  # Change to info for console display
         self.events.publish(EVENT_TICK, data)
 
     def _connect_callback(self, nx_stream, ev):
