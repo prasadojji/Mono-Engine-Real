@@ -56,20 +56,22 @@ if engine.login():
     # Temp: Get watchlist from market_data and simulate buy signals
     market_data = engine.modules.get('market_data')
     if market_data and market_data.watchlist:
-        for item in market_data.watchlist:  # Loop over watchlist
-            symbol = item['symbol']
-            qty = 900 if engine.mode == 'paper' else 1  # Paper qty placeholder
-            # Publish signal (mimics strategy)
-            engine.events.publish('buy_signal', {'symbol': symbol, 'quantity': qty, 'order_type': 'market'})
-            time.sleep(1)  # Delay for processing
+        for item in market_data.watchlist:
+            token_symbol = f"{item['token']}_BFO"  # For price lookup (matches quotes key)
+            disp_symbol = item['symbol']  # For logs and state (user-friendly name)
+            qty = 900 if engine.mode == 'paper' else 1
+            engine.events.publish('buy_signal', {'disp_symbol': disp_symbol, 'token_symbol': token_symbol, 'quantity': qty, 'order_type': 'market'})
+            time.sleep(1)  # Delay for processing (keep as is)
     else:
         print("No watchlist—load first.")
 
     # Temp: Simulate sell signal for first watchlist item (for PnL test)
     state = engine.modules.get('state')
     if state.is_in_trade() and market_data.watchlist:
-        first_symbol = market_data.watchlist[0]['symbol']
-        engine.events.publish('sell_signal', {'symbol': first_symbol})
+        first_item = market_data.watchlist[0]
+        first_disp = first_item['symbol']  # For logs
+        first_token = f"{first_item['token']}_BFO"  # For price lookup
+        engine.events.publish('sell_signal', {'disp_symbol': first_disp, 'token_symbol': first_token})
         time.sleep(1)
 
     # Temp loop

@@ -1,0 +1,1767 @@
+/*******************************************Volume Profile**************************************************************/
+//GfxSetZOrder( -5 );
+//GfxSetCoordsMode( 1 );
+
+volumeValueArea = Param( "Volume Value area (%)", 0.7, 0, 1, 0.01 );
+showVolume = ParamToggle( "Show Volume", "No|Yes", 1 );
+showMain = ParamToggle( "Show main levels VAH, VAL and VPOC", "No|Yes", 1 );
+showHL = ParamToggle( "Show Main High/Low boundaries", "No|Yes", 1 );
+showShifted = ParamToggle( "Show shifted levels VAHn1, VALn1, VPOCn1, etc", "No|Yes", 1 );
+showShiftedHL = ParamToggle( "Show shifted High/Low HODn1, LODn1, etc", "No|Yes", 1 );
+giveVolumeAreaColor = ParamToggle( "Give Volume Value Area Other color", "No|Yes", 1 );
+sep = ParamList( "Separator Interval", "Day|Week|Month|Year", 0 );
+fontType = ParamList( "GFX Font Type", "Tahoma|Arial|Verdana|Courier New|Times New Roman|Open Sans|Segoe UI|DejaVu Sans", 3 );
+fontSize = Param( "GFX Font Size", 9, 1, 20, 1 );
+lineWidth1 = Param( "GFX Value Area Line Width", 1, 1, 10, 1 );
+lineWidth2 = Param( "GFX Volume Line Width", 5, 1, 30, 1 );
+showLabel = ParamToggle( "Show Labels on Levels", "No|Yes", 1 );
+shft = Param( "Shift Volume Value Area (Interval)", 1, 1, 10, 1 );
+volfact = Param( "Volume Factor", 0.8, 0.5, 1, 0.01 );
+bins = Param( "Bins", 50, 10, 500, 1 );
+
+switch( sep )
+{
+case "Day":
+    dn = Day();
+    dn1 = inDaily;
+    break;
+
+case "Week":
+    dw = DayOfWeek();
+    newWeek = dw < Ref( dw, -1 );;
+    newYear = Year() != Ref( Year(), -1 );
+    dn = weekNumber = Sum( newWeek, BarsSince( newYear ) + 1 );
+    dn1 = inWeekly;
+    break;
+
+case "Month":
+    dn = Month();
+    dn1 = inMonthly;
+    break;
+
+case "Year":
+    dn = Year();
+    dn1 = inYearly;
+    break;
+}
+
+separator = dn != Ref( dn, -1 );
+
+bi = BarIndex();
+fvb = Max( 0, FirstVisibleValue( bi ) );
+lvb = Max( 0, LastVisibleValue( bi ) );
+
+dif = 0;
+mxih = mxil = 0;
+VPOC = VAH = VAL = Null;
+HOD = TimeFrameGetPrice( "H", dn1 );
+LOD = TimeFrameGetPrice( "L", dn1 );
+
+for( i = 0; i <= 2 + shft; i++ )
+{
+    VarSet( "lbx" + i, ValueWhen( separator, bi, i ) );
+}
+
+
+// Initialize OpenVAH before referencing it
+OpenVAH = 0;
+OpenVAL = 0;
+OpenVPOC = 0;
+OpenLOD = 0;
+OpenHOD = 0;
+
+// Detect New Candle
+NewCandle = BarIndex() != Ref( BarIndex(), -1 );
+
+// Store Open VAH, Open VAL, etc., only at candle open
+OpenVAH = IIf( separator, VAH, Nz( Ref( OpenVAH, -1 ) ) );
+OpenVAL = IIf( separator, VAL, Nz( Ref( OpenVAL, -1 ) ) );
+OpenVPOC = IIf( separator, VPOC, Nz( Ref( OpenVPOC, -1 ) ) );
+OpenLOD = IIf( separator, LOD, Nz( Ref( OpenLOD, -1 ) ) );
+OpenHOD = IIf( separator, HOD, Nz( Ref( OpenHOD, -1 ) ) );
+
+// Close values (Update dynamically)
+CloseVAH = VAH;
+CloseVAL = VAL;
+CloseVPOC = VPOC;
+CloseLOD = LOD;
+CloseHOD = HOD;
+
+/*function drawHLine( x1, x2, y , clr, zorder, flag, txt, lw )
+{
+    GfxSetZOrder( zorder );
+    GfxSelectPen( clr, lw, 0 );
+    GfxMoveTo( x1, y );
+    GfxLineTo( x2, y );
+
+    if( flag )
+    {
+        GfxSetZOrder( 4 );
+        GfxSetTextAlign( 2 | 8 );
+        GfxSetBkColor( ColorRGB( 0, 0, 0 ) );
+        GfxSetTextColor( clr );
+        GfxSelectFont( fontType, fontSize );
+        GfxTextOut( txt + Prec( y, 2 ), x2 , y );
+    }
+}*/
+
+function drawHLine( x1, x2, y, clr, zorder, flag, txt, lw )
+{
+    Plot( IIf( BarIndex() >= x1 AND BarIndex() <= x2, y, Null ), txt, clr, styleDashed | styleThick, Null, Null, lw );
+
+    if( flag )
+    {
+        PlotText( txt + " " + Prec( y, 2 ), x2, y, clr );
+    }
+}
+
+
+
+function calculateVolumeArea( mxVolBinIdx, totVol, bins, mx )
+{
+
+
+    mxih = mxil = mxVolBinIdx;
+    tvol = mx[mxVolBinIdx][1];
+
+    for( j = 0; j < bins; j++ )
+    {
+        if( mxih + 1 < bins AND mxil - 1 >= 0 )
+        {
+            relvolumeh = mx[mxih + 1][1];
+            relvolumel = mx[mxil - 1][1];
+
+            if( relvolumeh > relvolumel )
+            {
+                mxih = mxih + 1;
+                tvol = tvol + relvolumeh;
+            }
+            else
+                if( relvolumeh < relvolumel )
+                {
+                    mxil = mxil - 1;
+                    tvol = tvol + relvolumel;
+                }
+                else
+                    if( relvolumeh == relvolumel )
+                    {
+                        mxih = mxih + 1;
+                        mxil = mxil - 1;
+                        tvol = tvol + relvolumeh + relvolumel;
+                    }
+        }
+        else
+            if( mxih + 1 >= bins AND mxil - 1 >= 0 )
+            {
+                relvolumel = mx[mxil - 1][1];
+                mxil = mxil - 1;
+                tvol = tvol + relvolumel;
+            }
+            else
+                if( mxih + 1 < bins AND mxil - 1 < 0 )
+                {
+                    relvolumeh = mx[mxih + 1][1];
+                    mxih = mxih + 1;
+                    tvol = tvol + relvolumeh;
+                }
+
+        //_TRACE( "tvol: " + tvol + " totVol: " + totVol + " ratio: " + ( tvol / totVol ) );
+        if( ( tvol / totVol ) >= volumeValueArea ) break;
+    }
+}
+
+function calculateVolumeValueArea( fb, lb )
+{
+    cnt = 0; // count number of visible days
+
+    for( i = lb; i > fb; i-- )
+    {
+        idx0 = lbx0[i];
+        idx1 = lbx1[i];
+        idx2 = lbx2[i];
+
+        if( IsEmpty( idx1 ) ) break;
+
+        mx = PriceVolDistribution( H, L, V, bins, False, idx2, idx1 - 1 );
+        dx = idx1 - idx2;
+
+        mxVolBinIdx = 0;
+        mxVol = 0;
+        totVol = 0;
+
+        for( j = 0; j < bins; j++ )
+        {
+            price = mx[j][0]; // price level
+            relvolume = mx[j][1]; // relative volume 0..1
+            relbar = relvolume * dx;
+
+            /*if( showVolume )
+             {
+                 drawHLine( idx2, idx2 + ( relbar * volfact ), price, ColorRGB( 60, 0, 0 ), -4, 0, "", lineWidth2 );
+             }*/
+
+            // calculation of POC
+            if( relvolume >= mxVol )
+            {
+                // check case if mxVol is the same as prior mxVol
+                if( relvolume == mxVol )
+                {
+                    // only shift to this top if it is closer to the center of the distribution
+                    if( abs( j - ( bins / 2 ) ) < abs( mxVolBinIdx - ( bins / 2 ) ) )
+                    {
+                        mxVol = relvolume;
+                        mxVolBinIdx = j;
+                    }
+                }
+                else
+                {
+                    mxVol = relvolume;
+                    mxVolBinIdx = j;
+                }
+            }
+
+            totVol = totVol + relvolume;
+        }
+
+        priceVPOC = mx[mxVolBinIdx][0];
+        calculateVolumeArea( mxVolBinIdx, totVol, bins, mx );
+
+        priceh = mx[mxih][0];
+        pricel = mx[mxil][0];
+        x1 = idx2;
+        x2 = Min( idx1, BarCount - 1 );
+
+        line = Ref( LineArray( x1, priceh, x2, priceh ), 1 );
+        VAH = IIf( !IsEmpty( line ), line, VAH );
+        line = Ref( LineArray( x1, pricel, x2, pricel ), 1 );
+        VAL = IIf( !IsEmpty( line ), line, VAL );
+        line = Ref( LineArray( x1, priceVPOC, x2, priceVPOC ), 1 );
+        VPOC = IIf( !IsEmpty( line ), line, VPOC );
+
+        // give volume value area other color
+        if( giveVolumeAreaColor )
+        {
+            for( j = 0; j < bins; j++ )
+            {
+                price = mx[j][0]; // price level
+                relvolume = mx[j][1]; // relative volume 0..1
+                relbar = relvolume * dx;
+
+                /* if( showVolume AND price >= pricel AND price <= priceh )
+                  {
+                      drawHLine( idx2, idx2 + ( relbar * volfact ), price, ColorRGB( 0, 40, 0 ), -4, 0, "", lineWidth2 + 0 );
+                  }*/
+            }
+        }
+
+        if( showHL )
+        {
+            ph = HOD[x2 - 1];
+            drawHLine( x1, x2, ph, ColorRGB( 0, 250, 0 ), -3, showLabel, "HOD ", lineWidth1 );
+            pl = LOD[x2 - 1];
+            drawHLine( x1, x2, pl, ColorRGB( 250, 0, 0 ), -3, showLabel, "LOD ", lineWidth1 );
+        }
+
+        if( showMain )
+        {
+            drawHLine( x1, x2, priceh , ColorRGB( 0, 250, 250 ), -3, showLabel, "" + "VAH ", lineWidth1 );
+            drawHLine( x1, x2, pricel , ColorRGB( 0, 250, 250 ), -3, showLabel, "" + "VAL ", lineWidth1 );
+            drawHLine( x1, x2, priceVPOC , ColorRGB( 204, 77, 153 ), -3, showLabel, "" + "VPOC ", lineWidth1 );
+        }
+
+        if( cnt == 0 )
+        {
+            x1 = x2;
+            x2 = Min( lvb, BarCount - 1 );
+
+            if( x2 == 0 ) x2 = BarCount - 1;
+
+            if( showHL )
+            {
+                ph = HOD[x2];
+                drawHLine( x1, x2, ph, ColorRGB( 0, 250, 0 ), -3, showLabel, "HOD ", lineWidth1 );
+                pl = LOD[x2];
+                drawHLine( x1, x2, pl, ColorRGB( 250, 0, 0 ), -3, showLabel, "LOD ", lineWidth1 );
+            }
+
+            mx = PriceVolDistribution( H, L, V, bins, False, x1, x2 );
+            dx = x2 - x1;
+
+            mxVolBinIdx = 0;
+            mxVol = 0;
+            totVol = 0;
+
+            for( j = 0; j < bins; j++ )
+            {
+                price = mx[j][0]; // price level
+                relvolume = mx[j][1]; // relative volume 0..1
+                relbar = relvolume * dx;
+
+                /*if( showVolume ) drawHLine( x1, x1 + ( relbar * volfact ), price, ColorRGB( 80, 80, 80 ), -4, 0, "", lineWidth2 );*/
+
+                if( relvolume > mxVol )
+                {
+                    mxVol = relvolume;
+                    mxVolBinIdx = j;
+                }
+
+                totVol = totVol + relvolume;
+            }
+
+            priceVPOC = mx[mxVolBinIdx][0];
+            calculateVolumeArea( mxVolBinIdx, totVol, bins, mx );
+            priceh = mx[mxih][0];
+            pricel = mx[mxil][0];
+
+            line = LineArray( x1, priceh, x2, priceh );
+            VAH = IIf( !IsEmpty( line ), line, VAH );
+            line = LineArray( x1, pricel, x2, pricel );
+            VAL = IIf( !IsEmpty( line ), line, VAL );
+            line = LineArray( x1, priceVPOC, x2, priceVPOC );
+            VPOC = IIf( !IsEmpty( line ), line, VPOC );
+
+            if( showMain )
+            {
+                drawHLine( x1, x2, priceh , ColorRGB( 0, 250, 250 ), -3, showLabel, "" + "VAH ", lineWidth1 );
+                drawHLine( x1, x2, pricel , ColorRGB( 0, 250, 250 ), -3, showLabel, "" + "VAL ", lineWidth1 );
+                drawHLine( x1, x2, priceVPOC , ColorRGB( 204, 77, 153 ), -3, showLabel, "" + "VPOC ", lineWidth1 );
+            }
+
+            if( giveVolumeAreaColor AND showVolume )
+            {
+                for( j = 0; j < bins; j++ )
+                {
+                    price = mx[j][0]; // price level
+                    relvolume = mx[j][1]; // relative volume 0..1
+                    relbar = relvolume * dx;
+
+                    /*if( showVolume AND price >= pricel AND price <= priceh )
+                    {
+                        drawHLine( x1, x1 + ( relbar * volfact ), price, ColorRGB( 0, 100, 100 ), -4, 0, "", lineWidth2 );
+                    }*/
+                }
+            }
+        }
+
+        i = lbx1[ idx1 ];
+        cnt++;
+    }
+
+    //separator = dn != Ref( dn, -1 );  // Detect new candle/session
+
+}
+
+
+
+function shiftVolumeValueArea( fb, lb, shft )
+{
+    for( i = lb; i > fb; i-- )
+    {
+        // destination index
+        if( lbx0[i] == lbx1[i] )
+        {
+            x1 = lbx1[i];
+            x2 = Min( lb, BarCount - 1 );
+        }
+        else
+            if( lbx1[i] < lbx0[i] )
+            {
+                x1 = lbx1[i];
+                x2 = Min( lb, lbx0[i] );
+            }
+
+        for( s = 1; s <= shft; s++ )
+        {
+            xx0 = VarGet( "lbx" + ( s - 1 ) );
+            xx1 = VarGet( "lbx" + ( s + 0 ) );
+            xx2 = VarGet( "lbx" + ( s + 1 ) );
+
+            if( xx0[i] == xx1[i] )
+            {
+                // source index
+                x1s = xx2[i];
+                x2s = xx1[i];
+
+                if( !IsEmpty( x1s ) )
+                {
+                    if( showShifted )
+                    {
+                        drawHLine( x1, x2, VPOC[x1s] , ColorRGB( 250 / s, 0, 250 / s ), -3, showLabel, "VPOCn" + s + " ", lineWidth1 );
+                        drawHLine( x1, x2, VAH[x1s] , ColorRGB( 250 / s, 250 / s, 0 ), -3, showLabel, "VAHn" + s + " ", lineWidth1 );
+                        drawHLine( x1, x2, VAL[x1s] , ColorRGB( 250 / s, 250 / s, 0 ), -3, showLabel, "VALn" + s + " ", lineWidth1 );
+                    }
+
+                    if( showShiftedHL )
+                    {
+                        drawHLine( x1, x2, HOD[x1s], ColorRGB( 0, 250, 0 ), -3, showLabel, "HODn" + s + " ", lineWidth1 );
+                        drawHLine( x1, x2, LOD[x1s], ColorRGB( 250, 0, 0 ), -3, showLabel, "LODn" + s + " ", lineWidth1 );
+                    }
+
+
+                    // save shifted value area in dynamic arrays
+                    if( !IsEmpty( VPOC[x1s] ) )
+                    {
+                        line = Ref( LineArray( x1, VPOC[x1s], x2, VPOC[x1s] ), 1 );
+                        VarSet( "VPOCn" + s, IIf( line, line, VarGet( "VPOCn" + s ) ) );
+                    }
+
+                    if( !IsEmpty( VAH[x1s] ) )
+                    {
+                        line = Ref( LineArray( x1, VAH[x1s], x2, VAH[x1s] ), 1 );
+                        VarSet( "VAHn" + s, IIf( line, line, VarGet( "VAHn" + s ) ) );
+                    }
+
+                    if( !IsEmpty( VAL[ x1s ] ) )
+                    {
+                        line = Ref( LineArray( x1, VAL[x1s], x2, VAL[x1s] ), 1 );
+                        VarSet( "VALn" + s, IIf( line, line, VarGet( "VALn" + s ) ) );
+                    }
+                }
+            }
+            else
+                if( xx1[i] < xx0[i] )
+                {
+                    // source index
+                    x1s = xx2[i];
+                    x2s = xx1[i];
+
+                    if( !IsEmpty( x1s ) )
+                    {
+                        if( showShifted )
+                        {
+                            drawHLine( x1, x2, VPOC[x1s] , ColorRGB( 250 / s, 0, 250 / s ), -3, showLabel, "VPOCn" + s + " ", lineWidth1 );
+                            drawHLine( x1, x2, VAH[x1s] , ColorRGB( 250 / s, 250 / s, 0 ), -3, showLabel, "VAHn" + s + " ", lineWidth1 );
+                            drawHLine( x1, x2, VAL[x1s] , ColorRGB( 250 / s, 250 / s, 0 ), -3, showLabel, "VALn" + s + " ", lineWidth1 );
+                        }
+
+                        if( showShiftedHL )
+                        {
+                            drawHLine( x1, x2, HOD[x1s], ColorRGB( 0, 250, 0 ), -3, showLabel, "HODn" + s + " ", lineWidth1 );
+                            drawHLine( x1, x2, LOD[x1s], ColorRGB( 250, 0, 0 ), -3, showLabel, "LODn" + s + " ", lineWidth1 );
+                        }
+
+                        // save shifted value area in dynamic arrays
+                        if( !IsEmpty( VPOC[x1s] ) )
+                        {
+                            line = Ref( LineArray( x1, VPOC[x1s], x2, VPOC[x1s] ), 1 );
+                            VarSet( "VPOCn" + s, IIf( line, line, VarGet( "VPOCn" + s ) ) );
+                        }
+
+                        if( !IsEmpty( VAH[x1s] ) )
+                        {
+                            line = Ref( LineArray( x1, VAH[x1s], x2, VAH[x1s] ), 1 );
+                            VarSet( "VAHn" + s, IIf( line, line, VarGet( "VAHn" + s ) ) );
+                        }
+
+                        if( !IsEmpty( VAL[x1s] ) )
+                        {
+                            line = Ref( LineArray( x1, VAL[x1s], x2, VAL[x1s] ), 1 );
+                            VarSet( "VALn" + s, IIf( line, line, VarGet( "VALn" + s ) ) );
+                        }
+                    }
+                }
+        }
+
+        i = lbx1[i];
+    }
+}
+
+
+
+/*if( Status( "Action" ) == actionIndicator )
+{
+    Title = Name() + "   >>|<<   Volume area (%): " + EncodeColor( colorYellow ) + volumeValueArea * 100 + EncodeColor( colorWhite ) + "  >>|<<   Separator Timeframe: " + sep;
+
+    SetChartOptions( 0, chartShowDates );
+    SetChartBkColor( ColorRGB( 0, 0, 0 ) );
+    Plot( Close, "Price", colorDefault, styleCandle, Null, Null, 0, 0, 1 );
+    Plot( separator, "", colorDarkBlue, styleHistogram | styleOwnScale | styleNoLabel | styleNoRescale, 0, 1, 0, -2, 5 );
+
+    br = Flip( fvb == bi, lvb == bi );
+    periods = IIf( br, separator, 0 );
+    periods = LastValue( Cum( periods ) );
+    dif = int( ( lvb - fvb ) / periods );
+    fvb = Max( 0, fvb - 2 * dif );
+
+    calculateVolumeValueArea( fvb, lvb );
+    shiftVolumeValueArea( fvb, lvb, shft );
+}*/
+
+if( Status( "Action" ) == actionIndicator )
+{
+    Title = Name() +
+            "   Open: " + Open +
+            "   High: " + High +
+            "   Low: " + Low +
+            "   Close: " + Close +
+            " Date: " + Date();
+
+    SetChartOptions( 0, chartShowDates );
+    SetChartBkColor( ColorRGB( 0, 0, 0 ) );
+    Plot( Close, "Price", colorDefault, styleCandle, Null, Null, 0, 0, 1 );
+    Plot( separator, "", colorDarkBlue, styleHistogram | styleOwnScale | styleNoLabel | styleNoRescale, 0, 1, 0, -2, 5 );
+
+    br = Flip( fvb == bi, lvb == bi );
+    periods = IIf( br, separator, 0 );
+    periods = LastValue( Cum( periods ) );
+    dif = int( ( lvb - fvb ) / periods );
+    fvb = Max( 0, fvb - 2 * dif );
+
+    calculateVolumeValueArea( fvb, lvb );
+    shiftVolumeValueArea( fvb, lvb, shft );
+}
+
+maxShift = 3;
+
+// Assuming s changes dynamically
+for( s = 1; s <= maxShift; s++ )
+{
+    // Construct the variable name as a string
+    //variableName = "VPOCn" + NumToStr(s, 1.0);
+    variableName = "VPOCn " + s;
+    /*vahVariableName = "VAHn" + NumToStr(s, 1.0);
+    valVariableName = "VALn" + NumToStr(s, 1.0);
+    HoDVariableName = "HODn" + NumToStr(s, 1.0);*/
+    vahVariableName = "VAHn" + s;
+    valVariableName = "VALn" + s;
+    HoDVariableName = "HODn" + s;
+    LoDVariableName = "LODn" + s;
+
+    // Retrieve the value using VarGet
+    shiftedVPOC = VarGet( variableName );
+    shiftedVAH = VarGet( vahVariableName );
+    shiftedVAL = VarGet( valVariableName );
+    shiftedHoD = VarGet( HoDVariableName );
+    shiftedLoD = VarGet( HoDVariableName );
+}
+
+VALn1 = Ref( VAL, -1 );
+VAHn1 = Ref( VAH, -1 );
+VPOCn1 = Ref( VPOC, -1 );
+HoDn1 = Ref( HoD, -1 );
+LoDn1 = Ref( LoD, -1 );
+
+/*// Capture Open VAH, VAL, VPOC, HOD, LOD at the start of a new candle
+openVAH = ValueWhen( separator, VAH, 0 );
+openVAL = ValueWhen( separator, VAL, 0 );
+openVPOC = ValueWhen( separator, VPOC, 0 );
+openHOD = ValueWhen( separator, HOD, 0 );
+openLOD = ValueWhen( separator, LOD, 0 );  */
+
+//openVAH = openVAL = openVPOC = openLOD = openHOD = 0;
+/**************************************************************************************************************************************************/
+// 5-minute timeframe conditions
+TimeFrameSet( in5Minute );
+
+// Parameters
+fastLength = 12;
+slowLength = 26;
+signalSmoothing = 9;
+RSI_Period = 14;
+ADX_Period = 14;
+KPeriod = 14;
+DPeriod = 3;
+
+// Calculations
+// MACD
+MACDLine = MACD( fastLength, slowLength );
+SignalLine = Signal( fastLength, slowLength, signalSmoothing );
+MACDHist = MACDLine - SignalLine;
+
+// RSI
+RSIValue = RSI( RSI_Period );
+
+// ADX
+adxValue = ADX( ADX_Period );
+
+// Parabolic SAR
+SAR1 = SAR( 0.02, 0.2 );
+
+// Stochastic Oscillator
+SlowK = StochK( KPeriod, DPeriod );
+SlowD = MA( SlowK, DPeriod );
+
+// Parameters for Bollinger Bands
+Period = 20;    // Number of periods for moving average
+Width = 2;      // Width of the bands (in standard deviations)
+
+// Bollinger Bands Calculation
+MiddleBand = MA( Close, Period );
+StdDev = StDev( Close, Period );
+UpperBand = MiddleBand + Width * StdDev;
+LowerBand = MiddleBand - Width * StdDev;
+/***************************************************************************************************************************************************/
+
+/*********************************************Candle Body to Wick ratio **************/
+BodySize = abs( Close - Open );
+CandleRange = ( High - Low );
+
+StrengthPct = ( BodySize / ( CandleRange + 1e-9 ) ) * 100;
+
+// Plot the candle strength on the interpretation window
+//Plot(StrengthPct, "Candle Strength %", colorBlue, styleHistogram);
+
+// Display in Title
+Title = "Candle Strength: " + NumToStr( StrengthPct, 1.2 ) + "%";
+//StrengthPct > 70 strong bull/bear, < 30 Indecision
+
+/****************************Relative Strength Using Volume****************************************/
+
+CandleStrength = ( Close - Open ) * Volume;
+
+// Plot
+//Plot(CandleStrength, "Candle Strength (Volume-Based)", colorGreen, styleHistogram);
+
+// Title
+Title = "Candle Strength with Volume: " + NumToStr( CandleStrength, 1.0 );
+// +ve Buyer in control , -ve seller in control
+
+/*************************Wick Analysis (Rejections & Strength) ********************************/
+UpperWick = High - Max( Open, Close );
+LowerWick = Min( Open, Close ) - Low;
+
+// Plot Upper and Lower Wick Strength
+//Plot(UpperWick, "Upper Wick Strength", colorRed, styleHistogram);
+//Plot(LowerWick, "Lower Wick Strength", colorBlue, styleHistogram);
+
+// Title Information
+Title = "Upper Wick: " + NumToStr( UpperWick, 1.2 ) +
+        "\nLower Wick: " + NumToStr( LowerWick, 1.2 );
+// Longer upper wick, strong selling ie bearing.
+// Longer lower wick strong buying ie ie bullish
+//No wick strong in either side based on the candle
+/*****************************************
+ Strength (Breakout vs Normal Move)***************/
+ATR_14 = ATR( 14 );
+ATR_Strength = ( CandleRange / ATR_14 ) * 100;
+
+ATR_3 = ATR( 3 );
+ATR3_Strength = ( CandleRange / ATR_3 ) * 100;
+
+// Plot ATR Strength
+//Plot(ATR_Strength, "ATR Strength %", colorOrange, styleHistogram);
+
+// Title Information
+Title = "ATR Strength: " + NumToStr( ATR_Strength, 1.2 ) + "%";
+// > 120% strong move <80% normal candle no movement
+/*****************************************RSI *******************************************************/
+
+// Parameters
+RSI_Period = 14;  // Default RSI period
+
+// Calculate RSI
+UpMove = IIf( Close > Ref( Close, -1 ), Close - Ref( Close, -1 ), 0 );
+DownMove = IIf( Close < Ref( Close, -1 ), Ref( Close, -1 ) - Close, 0 );
+
+AvgUp = MA( UpMove, RSI_Period );
+AvgDown = MA( DownMove, RSI_Period );
+
+RS = AvgUp / ( AvgDown + 0.00001 ); // Avoid division by zero
+RSIValue = 100 - ( 100 / ( 1 + RS ) );
+
+// Plot RSI
+//Plot(RSIValue, "RSI(" + NumToStr(RSI_Period, 1.0) + ")", colorBlue, styleThick);
+
+// Plot Overbought and Oversold levels
+//Plot(70, "", colorRed, styleDashed);
+//Plot(30, "", colorGreen, styleDashed);
+
+/***************************************Short term trend 9(EMA(9) and EMA(21)****************************************************************/
+
+
+ShortEMA = EMA( Close, 9 );
+LongEMA = EMA( Close, 21 );
+ADXValue = ADX( 14 );
+
+StrongTrend = ADXValue > 25;
+UpTrend = StrongTrend AND ShortEMA > LongEMA;
+DownTrend = StrongTrend AND ShortEMA < LongEMA;
+
+/*Plot(ADXValue, "ADX(14)", colorBlue);
+PlotShapes(IIf(UpTrend, shapeUpArrow, shapeNone), colorGreen, 0, Low, Offset=-15);
+PlotShapes(IIf(DownTrend, shapeDownArrow, shapeNone), colorRed, 0, High, Offset=15);*/
+/**********************************************STOCASTIC ****************************************************/
+
+KPeriod = 14;
+DPeriod = 3;
+
+// Stochastic Oscillator
+SlowK = StochK( KPeriod, DPeriod );
+SlowD = MA( SlowK, DPeriod );
+
+/*********************************************VWAP Trend COnfirmation***********************************************************/
+
+_SECTION_BEGIN( "VWAP Trend Confirmation" );
+
+// Calculate VWAP
+DayStart = TimeFrameGetPrice( "O", inDaily, 0 );
+CumulativeVolume = Sum( Volume, BarIndex() + 1 );
+CumulativeTPV = Sum( ( High + Low + Close ) / 3 * Volume, BarIndex() + 1 );
+VWAP = CumulativeTPV / CumulativeVolume;
+
+// Define Trend Conditions
+BullishTrend = Close > VWAP;
+BearishTrend = Close < VWAP;
+
+// Parameters
+lookbackPeriod = Param("Lookback Period", 20, 1, 100, 1);
+
+// Initialize variables
+highestVolPrice = 0;
+lowestVolPrice = 0;
+highestVol = 0;
+lowestVol = 1e10;  // Start with a very high value for lowest volume
+volumeArray = Nz(Volume);  // Ensure Volume array is not null
+
+// Loop through the bars to find the highest and lowest volume within the lookback period
+for (i = 0; i < lookbackPeriod; i++)
+{
+    if (i >= BarCount) break;  // Ensure we do not go out of range
+
+    if (volumeArray[BarCount - 1 - i] > highestVol)
+    {
+        highestVol = volumeArray[BarCount - 1 - i];
+        highestVolPrice = Close[BarCount - 1 - i];
+    }
+    if (volumeArray[BarCount - 1 - i] < lowestVol)
+    {
+        lowestVol = volumeArray[BarCount - 1 - i];
+        lowestVolPrice = Close[BarCount - 1 - i];
+    }
+}
+
+// Calculate VWAP
+cumVolume = Cum(volumeArray);
+cumVWAP = Cum(volumeArray * Close);
+vwapValue = IIf(cumVolume != 0, cumVWAP / cumVolume, 0);
+
+// Parameters
+PeriodVol = 14;
+
+// Volume Calculations
+VolumeMA = MA( Volume, PeriodVol );
+VolumeSpike = IIf( Volume > 1.3 * VolumeMA, 1, 0 );
+VolumeSpike1 = IIf( Volume > 1.2 * VolumeMA, 1, 0 );
+
+/*// Plotting the Volume Point of Control (VPOC), Volume Point of No Control (VPONC), and VWAP
+if (highestVolPrice != 0)
+{
+    Plot(highestVolPrice, "Volume Point of Control", colorRed, styleLine | styleThick);
+}
+if (lowestVolPrice != 0)
+{
+    Plot(lowestVolPrice, "Volume Point of No Control", colorBlue, styleLine | styleThick);
+}
+Plot(IIf(vwapValue != 0, vwapValue, Null), "VWAP", colorWhite, styleLine | styleThick);
+
+
+// Plot VWAP Line
+Plot( VWAP, "VWAP", colorBlue, styleThick );*/
+
+// Plot Buy and Sell Signals
+/*Buy = BullishTrend;
+Sell = BearishTrend;
+
+BuySignal = ExRem(Buy, Sell);
+SellSignal = ExRem(Sell, Buy);
+
+PlotShapes(IIf(BuySignal, shapeUpArrow, shapeNone), colorGreen, 0, Low, Offset=-10);
+PlotShapes(IIf(SellSignal, shapeDownArrow, shapeNone), colorRed, 0, High, Offset=-10);
+
+Title = "VWAP: " + NumToStr(VWAP, 2.2) + "\nTrend: " + IIf(BullishTrend, "Bullish", "Bearish"); */
+
+_SECTION_END();
+
+/****************************************Bullish Trend*****************************************************************/
+
+_SECTION_BEGIN( "Enhanced VWAP Trend Confirmation" );
+
+// VWAP Calculation
+CumulativeVolume = Sum( Volume, BarIndex() + 1 );
+CumulativeTPV = Sum( ( High + Low + Close ) / 3 * Volume, BarIndex() + 1 );
+VWAP = CumulativeTPV / CumulativeVolume;
+
+// Additional Trend Filters
+EMA_Short = EMA( Close, 9 ); // Short-term EMA for trend confirmation
+EMA_Long = EMA( Close, 21 ); // Long-term EMA to confirm trend strength
+Momentum = ROC( Close, 5 );  // Momentum indicator for strength
+VolumeMA = MA( Volume, 10 ); // Volume filter to detect strength
+
+// Trend Confirmation Logic
+BullishTrendVol = Close > VWAP AND EMA_Short > EMA_Long AND Momentum > 0 AND Volume > VolumeMA;
+BearishTrendVol = Close < VWAP AND EMA_Short < EMA_Long AND Momentum < 0 AND Volume > VolumeMA;
+
+// Buy and Sell Signals
+/*Buy = BullishTrend;
+Sell = BearishTrend;
+
+BuySignal = ExRem(Buy, Sell);
+SellSignal = ExRem(Sell, Buy);
+
+// Plot VWAP and EMAs
+Plot(VWAP, "VWAP", colorBlue, styleThick);
+Plot(EMA_Short, "EMA 9", colorGreen, styleDashed);
+Plot(EMA_Long, "EMA 21", colorRed, styleDashed);
+
+// Plot Buy and Sell Signals
+PlotShapes(IIf(BuySignal, shapeUpArrow, shapeNone), colorGreen, 0, Low, Offset=-10);
+PlotShapes(IIf(SellSignal, shapeDownArrow, shapeNone), colorRed, 0, High, Offset=-10);
+/*
+// Display Trend Info
+Title = "VWAP: " + NumToStr(VWAP, 2.2) +
+        "\nEMA 9: " + NumToStr(EMA_Short, 2.2) +
+        "\nEMA 21: " + NumToStr(EMA_Long, 2.2) +
+        "\nMomentum: " + NumToStr(Momentum, 2.2) +
+        "\nVolume MA: " + NumToStr(VolumeMA, 2.2) +
+        "\nTrend: " + IIf(BullishTrend, "Bullish", "Bearish");
+*/
+_SECTION_END();
+/***************************************Momentum**********************************************************/
+
+// AFL Code for Non-Repainting RSI Divergence (Momentum Weakness)
+
+// Set parameters
+RSI_Period = 14;
+RSI_Value = RSI( RSI_Period );
+
+// Shift back by 1 bar to confirm divergence only on previous candles
+Price_High = Ref( High, -1 );
+RSI_High = Ref( RSI_Value, -1 );
+
+// Store previous high values for comparison
+Price_High1 = Ref( Price_High, -1 );
+Price_High2 = Ref( Price_High, -2 );
+
+RSI_High1 = Ref( RSI_High, -1 );
+RSI_High2 = Ref( RSI_High, -2 );
+
+// Condition for Bearish Divergence (Price Higher High + RSI Lower High)
+BearishDivergence = ( Price_High > Price_High1 AND Price_High1 > Price_High2 ) AND
+                    ( RSI_High < RSI_High1 AND RSI_High1 < RSI_High2 );
+
+// Condition for Bullish Divergence (Price Lower Low + RSI Higher Low)
+BullishDivergence = ( Price_High < Price_High1 AND Price_High1 < Price_High2 ) AND
+                    ( RSI_High > RSI_High1 AND RSI_High1 > RSI_High2 );
+
+// Non-repainting condition: Signals only appear **AFTER divergence confirmation**
+ConfirmedSell = Ref( BearishDivergence, -1 );
+ConfirmedBuy = Ref( BullishDivergence, -1 );
+/*
+// Plot RSI Indicator
+Plot(RSI_Value, "RSI", colorBlue, styleThick);
+
+// Plot Buy & Sell Signals
+Buy = ConfirmedBuy;
+Sell = ConfirmedSell;
+
+PlotShapes(IIf(Buy, shapeUpArrow, shapeNone), colorGreen, 0, Low, -15);
+PlotShapes(IIf(Sell, shapeDownArrow, shapeNone), colorRed, 0, High, 15);
+
+// Filters to Avoid False Signals
+Buy = Buy AND RSI_Value < 40;  // Buy only if RSI is below 40 (oversold)
+Sell = Sell AND RSI_Value > 60; // Sell only if RSI is above 60 (overbought)
+
+// Exploration for Debugging
+Filter = Buy OR Sell;
+AddColumn(High, "Price High", 1.2);
+AddColumn(RSI_Value, "RSI", 1.2);
+AddColumn(IIf(Buy, 1, 0), "Buy Signal", 1);
+AddColumn(IIf(Sell, 1, 0), "Sell Signal", 1);
+
+Title = "Non-Repainting Divergence Trading \n"
+        + "Current RSI: " + NumToStr(RSI_Value, 1.2) + "\n"
+        + "Bearish Divergence: " + WriteIf(Sell, "YES", "NO") + "\n"
+        + "Bullish Divergence: " + WriteIf(Buy, "YES", "NO");
+*/
+
+
+/************************************MA SLope & ADX for sideways market**********************************************************************/
+// PARAMETERS
+adxPeriod = 14;   // ADX Calculation Period
+maPeriod = 50;    // Moving Average Period
+slopeLookback = 5; // Period to check MA slope
+adxThreshold = 25; // Minimum ADX value to confirm trend
+slopeThreshold = 0.2; // Minimum MA slope to confirm trend
+
+// CALCULATE ADX
+adxValue = ADX( adxPeriod );
+prevADX = Ref( adxValue, -1 ); // Use ADX of the previous candle
+
+// CALCULATE MOVING AVERAGE & SLOPE
+ma1 = MA( Close, maPeriod );
+maSlope = ROC( ma1, slopeLookback );
+prevSlope = Ref( maSlope, -1 ); // Use Slope of the previous candle
+
+// FILTER: Confirm trend using previous candle values
+TrendFilter = ( prevADX > adxThreshold ) AND( abs( prevSlope ) > slopeThreshold );
+
+
+/*****************************************Donchian Channel for Sideways*****************************************************************/
+// Donchian Period
+donchianPeriod = 20;
+
+// Calculate Donchian High and Low
+donchianHigh = HHV( High, donchianPeriod );
+donchianLow = LLV( Low, donchianPeriod );
+donchianRange = donchianHigh - donchianLow;
+
+// Set a threshold to detect sideways market (50% of Donchian MA)
+donchianThreshold = MA( donchianRange, 20 ) * 0.5;
+
+// Filter: Avoid trades if range is too small (Sideways Market)
+DonTrendFilter = donchianRange > donchianThreshold;
+
+/********************************TSI Frank Hassler ******************************************************/
+
+Ratio = abs( close - Ref( Close, -10 ) ) / ATR( 10 );
+TSI = MA( MA( Ratio, 10 ), 100 );
+
+/******************************************ATR3 Period ********************************************************************/
+// ATR with Period = 3
+ATR3P = ATR( 3 );
+
+// Plot on chart
+//Plot(ATR3P, "ATR3P", colorOrange, styleLine);
+/**************************************Linear Regression Angle************************************************************************/
+
+Len = 10; // Regression length
+Slope = LinRegSlope( Close, Len );
+Angle = atan( Slope ) * 180 / 3.1416;
+
+/*************************************************Test 12042025************************************************************/
+
+SetBarsRequired(1000, 1000 );
+
+// 1. Candle Strength Index (CSI): Strong close near high
+CSI = ( Close - Low ) / ( High - Low + 0.001 ); // Avoid divide by zero
+
+// 1. Candle Strength Index (CSI): Strong close near high
+//CSI = IIf(Close > Open, (Close - Low) / (High - Low + 0.001), -(Close - Low) / (High - Low + 0.001));  // Avoid divide by zero
+
+
+// 2. Volume Imbalance Factor (VIF): Higher volume on green candles
+GreenVol = IIf( Close > Open, Volume, 0 );
+RedVol = IIf( Close < Open, Volume, 0 );
+VolImbalance = EMA( GreenVol - RedVol, 5 ) / EMA( Volume, 5 );
+
+// 3. Regression Angle (Trend Slope)
+Len = 10;
+x = Cum( 1 );
+SumX = Sum( x, Len );
+SumY = Sum( Close, Len );
+SumXY = Sum( x * Close, Len );
+SumX2 = Sum( x * x, Len );
+Slope = ( Len * SumXY - SumX * SumY ) / ( Len * SumX2 - SumX ^ 2 );
+Angle = atan( Slope ) * 180 / 3.1416; // Convert to degrees
+
+// 4. Body-to-Wick Ratio (BWR)
+Body = abs( Close - Open );
+UpperWick = High - Max( Close, Open );
+LowerWick = Min( Close, Open ) - Low;
+BWR = Body / ( UpperWick + LowerWick + 0.001 ); // Avoid divide by zero
+
+// 5. Thrust to ATR (Momentum Kick)
+Thrust = ( Close - Ref( Close, -1 ) );
+ATRval = ATR( 14 );
+MomentumThrust = Thrust / ATRval;
+
+// Final Composite Score (weighted sum, tweakable)
+CSS = 40 * CSI +
+      20 * VolImbalance +
+      15 * BWR +
+      15 * MomentumThrust +
+      10 * Angle / 45;  // Normalize angle
+
+// Plot score
+//Plot(CSS, "Candle Strength Score", colorBlue, styleLine);
+
+// Optional: Mark strong candles
+StrengthThreshold = 65;
+
+
+// === STATE TRACKING VARIABLES ===
+//TrailingStop           = Null;
+//Trailstart             = Null;
+//StopLoss               = Null;
+//prevAP = prevDP = 0;
+
+// 5-minute timeframe conditions
+//TimeFrameSet(in5Minute);
+STD = vwapValue > Ref(vwapValue, -1) AND VolumeSpike;
+GC = Ref( Open, -1 ) < Ref( Close, -1 );
+RC = Ref( Open, -1 ) > Ref( Close, -1 );
+B0 = Cross( High, Ref( High, -1 ) ) ; //High > Ref(High, -1);
+B1 = Ref( StrengthPct, -1 ) > 65 AND GC;
+B101 = Ref( StrengthPct, -1 ) < 10 AND( RC OR GC );
+B2 = Ref( UpperWick, -1 ) > Ref( LowerWick, -1 );
+B21 = Ref( UpperWick, -1 ) < Ref( LowerWick, -1 );
+B3 = Ref( CandleStrength, -1 ) > 0;
+B31 = Ref( CandleStrength, -1 ) > 120000;
+B32 = Ref( CandleStrength, -1 ) > 500000;
+B4 = Ref( ATR_Strength, -1 ) > 100;
+B41 = Ref( ATR_Strength, -1 ) > 80;
+B5 = Ref( RSIValue, -1 ) > 39;
+B6 = Ref( UpTrend, -1 );
+B7 = Ref( BullishTrend, -1 );
+B8 = Ref( BullishTrendVol, -1 );
+B9 = ConfirmedBuy;
+B10 = Ref( DonTrendFilter, -1 );
+B11 = B101 AND B21;
+B12 = Ref( ATR3P, -1 ) > 50;
+FiveHigh = High;
+PreFiveMinOpen = Ref( Open, -1 );
+PreFiveMinHigh = Ref( High, -1 );
+PreFiveMinLow = Ref( Low, -1 );
+PreFiveMinClose = Ref( Close, -1 );
+
+// Sell conditions
+S1 = Ref( High, -1 ) == Ref( Close, -1 ) AND Open > Ref( Close, -1 ) AND Cross( Ref( Low, -1 ), Close ) AND GC;
+S2 = Ref( High, -1 ) == Ref( Close, -1 ) AND Open > Ref( High, -1 ) AND Cross( Ref( Low, -1 ), Close ) AND Low < (Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02) AND Open - Low > 2 AND GC;
+S3 = MACDLine < SignalLine AND RSIValue < 50 AND adxValue < 25 AND SlowK >= 80 AND GC;
+S4 = Open > Ref( High, -1 ) AND Ref( Open, -1 ) != Ref( Low, -1 ) AND Low < Ref( Close, -1 ) - 6 AND Low < (Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02) AND Open - Low > 2 AND GC;
+S5 = Ref( Open, -1 ) - Ref( Low, -1 ) < 1 AND Low < Ref( Low, -1 ) - ( Ref( Open, -1 ) + Ref( Close, -1 ) ) / 2 * 0.03 AND Low < (Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02) AND Open - Low > 2 AND GC;
+S6 = Ref( High, -1 ) < Ref( High, -2 ) AND GC;
+S7 = Ref( Low, -1 ) < Ref( Low, -2 ) AND Low < Ref( Low, -1 ) - 2 AND Low < (Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02) AND Open - Low > 2 AND GC;
+S8 = Low < Ref( Open, -1 ) AND Low < Ref( Open, -2 ) AND Low < Ref( Low, -1 ) AND Low < Ref( Low, -2 ) AND Ref( Open, -2 ) > Ref( Close, -2 ) AND Low < (Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02) AND Open - Low > 2 AND GC;
+S9 = Low < Ref( Low, -1 ) - 2 AND Low < Ref( Open, -2 ) - 3 AND Low < Ref( Low, -1 ) - Ref( Low, -1 ) * 0.04 AND Open - Low > 2 AND GC;
+S3R = MACDLine < SignalLine AND RSIValue < 50 AND adxValue < 25 AND SlowK >= 80 AND RC;
+SR1 = Open < Ref( Low, -1 ) AND Open - Low > 2 AND RC;
+SR2 = Ref( Close, -1 ) - Ref( Low, -1 ) < 0.4 AND Low < Ref( Low, -1 ) < 5 AND Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02 AND Open - Low > 2 AND RC;
+SR3 = RC AND Ref( Open, -1 ) - Ref( Close, -1 ) < Ref( High, -1 ) - Ref( Open, -1 ) AND Ref( High, -1 ) - Ref( Open, -1 ) > Ref( Close, -1 ) - Ref( Low, -1 ) AND Ref( Close, -1 ) - Ref( Low, -1 ) < Ref( Open, -1 ) - Ref( Close, -1 ) AND Low < Ref( Low, -1 ) AND Open - Low > 2;
+SR4 = High - Open < 2 AND Low < Ref( Low, -1 ) AND RC;
+SR5 = Ref( High, -1 ) > Ref( High, -2 ) AND Ref( Low, -1 ) > Ref( Low, -2 ) AND Open > Ref( Close, -1 ) AND Open - Ref( Close, -1 ) > 0.5 AND High > BuyPrice + BuyPrice * 0.06 AND RC;
+SR6 = Ref( High, -1 ) > Ref( High, -2 ) AND Ref( Low, -1 ) > Ref( Low, -2 ) AND Open > Ref( Close, -1 ) AND Open - Ref( Close, -1 ) > 0.5 AND High > BuyPrice + BuyPrice * 0.06 AND RC;
+SR7 = Open < Ref( Close, -1 ) AND Low < Ref( Low, -1 ) - 3 AND Low < Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02 AND Open - Low > 2 AND RC;
+SR8 = Low < Ref( Low, -1 ) - 3 AND Ref( Open, -2 ) > Ref( Close, -2 ) AND Low <= Ref( Low, -2 ) AND Low < Ref( Low, -1 ) - Ref( Low, -1 ) * 0.02 AND Open - Low > 2 AND RC;
+SR9 = Ref( High, -1 ) > Ref( High, -2 ) AND Ref( Low, -1 ) > Ref( Low, -2 ) AND High > BuyPrice + BuyPrice * 0.06 AND RC;
+
+// Combo formulas
+CB1 = GC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 10 AND SlowK > SlowD AND High >= MiddleBand;
+CB2 = GC AND MACDLine > 5 AND RSIValue > 40 AND adxValue > 10 AND SlowK > SlowD AND High >= MiddleBand;
+CB3 = GC AND Open < LowerBand AND High >= MiddleBand;
+CB4 = RSIValue > 20 AND SlowK > SlowD AND adxValue > 40 AND High >= MiddleBand;
+CB5 = GC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 20 AND Open >= LowerBand;
+CB6 = GC AND RSIValue > 40 AND adxValue > 19 AND Open >= LowerBand AND SlowK > SlowD;
+CBR1 = RC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 10 AND SlowK > SlowD AND High >= MiddleBand AND Open < UpperBand AND SlowK - SlowD < 1.6;
+CBR2 = RC AND MACDLine > 5 AND RSIValue > 40 AND adxValue > 10 AND Open < UpperBand AND SlowK - SlowD < 1.6 AND High >= MiddleBand;
+CBR3 = RC AND Open < Ref( LowerBand, -1 ) AND Open > UpperBand AND SlowK - SlowD < 1.6 AND High >= MiddleBand;
+CBR4 = RC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 20 AND Open >= LowerBand;
+
+BR1 = STD AND RC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 25 AND SlowK > SlowD AND Open < UpperBand AND High >= MiddleBand AND SlowK - SlowD > 1.6 ;//  AND Open < lowestVolPrice ;
+BR2 = STD AND RC AND MACDLine > 5 AND RSIValue > 40 AND adxValue > 25 AND Open < UpperBand AND SlowK - SlowD > 1.6 AND High >= MiddleBand;//  AND Open < lowestVolPrice ;
+BR3 = STD AND RC AND Open < LowerBand AND Open < UpperBand AND SlowK - SlowD > 1.6 AND High >= MiddleBand ;//  AND Open < lowestVolPrice  ;
+BR4 = STD AND RC AND MACDLine > SignalLine AND RSIValue > 40 AND adxValue > 20 AND Open >= LowerBand AND High >= MiddleBand ;//  AND Open < lowestVolPrice  ;
+BR5 = STD AND RC AND Low < LowerBand AND High > Ref(High , -1); // AND Open < lowestVolPrice ;
+BR6 = Cross(Ref(Low,-1), Ref(LowerBand, -1)) AND Ref(Close, -1) > Ref(LowerBand, -1);
+
+ NRC1 = Cross(High, Ref(High, -1)+3) AND Cross(High, Ref(High, -2)); //New Red candle Conditions
+ NRC2 = Ref(High, -1) > Ref(High, -2) AND Ref(Low, -1) > Ref(Low, -2) AND Open > Ref(Close, -1)
+		AND Ref(Close, -2)!= Ref(High, -2) AND High > (Ref(Open, -1)+Ref(Close, -1))/2 ;
+ NRC3 = Ref(High, -1) - Ref(Open, -1) < Ref(Close, -1) - Ref(Low, -1) AND Ref(Open, -1) - Ref(Close, -1) <=2 AND Cross(High, Ref(High, -1)+3);
+ NRC4 = Open > Ref(Close, -1) AND Cross(High, Ref(Open, -1)) AND Ref(Open, -2) > Ref(Close, -2) AND Cross(High, Ref(Open, -2)) AND Cross(High, Ref(High, -1)+3);
+ NRC5 = Ref(High, -1) == Ref(Open, -1) AND Open > Ref(Close, -1);
+ 
+ NRCB = (BR1 OR BR2 OR BR3 OR BR4 OR BR5 OR BR6) AND (NRC1 OR NRC2 OR NRC3 OR NRC4); // New red candle consolidated buy
+
+BB1 = B1 AND B2 AND B3 AND B5;
+BB2 = B2 AND B3 AND B4 AND B5 && B6 OR B2 AND B3 AND B4;
+BB3 = B3 AND B4 AND B1 AND B2 AND B5 && B6;
+BB4 = B4 AND B1 AND B2 AND B5 && B6;
+BB5 = B1 AND B3 AND B4 AND B5;
+BB6 = B3 AND B4 AND B5 && B6;
+BB7 = B2 && B4 && B5 && B6 AND !RC;
+BB8 = B8;
+BB9 = B2 AND B3 AND B5 AND B6;
+BB10 = B2 AND B31 AND B41 OR B3 AND B31 AND B32 AND B41 AND B12;
+BB11 = B32 AND B5 OR B3 AND B31 AND B4 AND B12;
+BB12 = SlowK > SlowD AND SlowK - SlowD > 3;
+BB13 = B11 AND Cross( High, Ref( High, -1 ) );
+BB14 = B1 AND B2 AND B32 AND B0 AND B12;
+BB15 = B2 AND B3 AND B12 AND GC AND Cross( High, Ref( High, -1 ) );
+BB16 = B21 AND B41 AND B12 AND RC AND Cross( High, Ref( High, -1 ) );
+BB17 = GC AND Cross( High, Ref( High, -1 ) ) AND Ref( Open, -1 ) - Ref( Low, -1 ) < 1 AND CSS > 70;
+
+CBB0 = CB1 OR CB2 OR CB3 OR CB4 OR CB5 OR CB6;
+CBB1 = CBB0 AND Cross( High, Ref( High, -1 ) + 3 ) AND Open > Ref( Open, -1 ) AND Ref( High, -1 ) > Ref( High, -2 ) AND Ref( Low, -1 ) > Ref( Low, -2 );
+CBB2 = CBB0 AND Open < Ref( Close, -1 ) AND Ref( Low, -1 ) > Ref( Low, -2 ) AND Cross( High, Ref( High, -1 ) + 3 ) AND Cross( High, Ref( High, -2 ) );
+CBB3 = CBB0 AND Open > Ref( Close, -1 ) AND Cross( High, Ref( High, -1 ) + 3 ) AND Ref( Open, -1 ) > Ref( Close, -2 );
+CBB4 = CBB0 AND Open > Ref( Close, -1 ) AND Cross( High, Ref( High, -1 ) + 3 ) AND Ref( Open, -1 ) - Ref( Close, -2 ) < 1;
+CBB5 = CBB0 AND Open < Ref( Close, -1 ) AND Ref( Close, -1 ) == Ref( High, -1 ) AND Cross( High, Ref( High, -1 ) + 3 );
+CBB6 = CBB0 AND Open < Ref( Close, -1 ) AND Open - Low <= ( Open * 0.0100 ) AND Cross( High, Ref( High, -1 ) + 3 );
+CBB7 = CBB0 AND Ref( Open, -1 ) == Ref( Low, -1 ) AND Open < Ref( Close, -1 ) AND Cross( High, Ref( High, -1 ) + 3 ) OR
+       CBB0 AND Ref( High, -1 ) > Ref( High, -2 ) AND Open < Ref( Close, -1 ) AND Cross( High, Ref( High, -1 ) + 3 );
+CBB8 = CBB0 AND Ref( Close, -1 ) - Ref( Open, -1 ) > 9 AND Ref( Close, -1 ) - Ref( Open, -1 ) < 13;
+
+CBR = CBR1 OR CBR2 OR CBR3 OR CBR4;
+CBBR1 = CBR AND Open > Ref( High, -1 );
+CBBR2 = CBR AND Ref( High, -1 ) - Ref( Open, -1 ) < 0.5;
+CBBR3 = CBR AND Cross( High, Ref( High, -1 ) + 3 ) AND Cross( High, Ref( High, -2 ) ) AND Cross( High, Ref( High, -1 ) + 3 );
+CBBR4 = CBR AND Ref( High, -1 ) > Ref( High, -2 ) AND Ref( Low, -1 ) > Ref( Low, -2 ) AND Open > Ref( Close, -1 ) AND Ref( Close, -2 ) != Ref( High, -2 ) AND High > ( Ref( Open, -1 ) + Ref( Close, -1 ) ) / 2 AND High > Ref( High, -1 );
+CBBR5 = CBR AND Ref( High, -1 ) - Ref( Open, -1 ) < Ref( Close, -1 ) - Ref( Low, -1 ) AND Ref( Open, -1 ) - Ref( Close, -1 ) <= 2 AND Cross( High, Ref( High, -1 ) + 3 );
+CBBR6 = CBR AND Open > Ref( Close, -1 ) AND High > Ref( Open, -1 ) AND Ref( Open, -2 ) > Ref( Close, -2 ) AND High > Ref( Open, -2 ) AND Cross( High, Ref( High, -1 ) + 3 );
+CBBR7 = CBR AND Ref( High, -1 ) == Ref( Open, -1 ) AND Open > Ref( Close, -1 );
+
+SS1 = S1 OR S2 OR S3;
+SS2 = S4 OR S3;
+SS3 = S5 OR S3;
+SS4 = S6 AND S7 OR S3 AND S7;
+SS5 = SS4 OR S3;
+SS6 = S9 OR S3;
+SSR1 = SR1 OR S3R;
+SSR2 = SR2 OR S3R;
+SSR3 = SR3 OR S3R;
+SSR4 = SR4 OR S3R;
+SSR5 = SR7 OR S3R;
+SSR6 = SR8 OR S3R;
+SSR7 = SR5 OR SR6 OR SR9;
+SSS = MACDLine < SignalLine AND RSIValue < 50 AND adxValue < 25 AND SlowK >= 80;
+SSN = SSR1 OR SSR2 OR SSR3 OR SSR4 OR SSR5 OR SSR6 OR !SSR7;
+
+TimeFrameRestore();
+
+// Expand all 5-minute conditions to 1-second timeframe
+FiveNRCB = Nz( TimeFrameExpand( NRCB, in5Minute, expandPoint ), 0 );
+FiveGC = Nz( TimeFrameExpand( GC, in5Minute, expandPoint ), 0 );
+FiveRC = Nz( TimeFrameExpand( RC, in5Minute, expandPoint ), 0 );
+FiveB0 = Nz( TimeFrameExpand( B0, in5Minute, expandPoint ), 0 );
+FiveB1 = Nz( TimeFrameExpand( B1, in5Minute, expandPoint ), 0 );
+FiveB101 = Nz( TimeFrameExpand( B101, in5Minute, expandPoint ), 0 );
+FiveB2 = Nz( TimeFrameExpand( B2, in5Minute, expandPoint ), 0 );
+FiveB21 = Nz( TimeFrameExpand( B21, in5Minute, expandPoint ), 0 );
+FiveB3 = Nz( TimeFrameExpand( B3, in5Minute, expandPoint ), 0 );
+FiveB31 = Nz( TimeFrameExpand( B31, in5Minute, expandPoint ), 0 );
+FiveB32 = Nz( TimeFrameExpand( B32, in5Minute, expandPoint ), 0 );
+FiveB4 = Nz( TimeFrameExpand( B4, in5Minute, expandPoint ), 0 );
+FiveB41 = Nz( TimeFrameExpand( B41, in5Minute, expandPoint ), 0 );
+FiveB5 = Nz( TimeFrameExpand( B5, in5Minute, expandPoint ), 0 );
+FiveB6 = Nz( TimeFrameExpand( B6, in5Minute, expandPoint ), 0 );
+FiveB7 = Nz( TimeFrameExpand( B7, in5Minute, expandPoint ), 0 );
+FiveB8 = Nz( TimeFrameExpand( B8, in5Minute, expandPoint ), 0 );
+FiveB9 = Nz( TimeFrameExpand( B9, in5Minute, expandPoint ), 0 );
+FiveB10 = Nz( TimeFrameExpand( B10, in5Minute, expandPoint ), 0 );
+FiveB11 = Nz( TimeFrameExpand( B11, in5Minute, expandPoint ), 0 );
+FiveB12 = Nz( TimeFrameExpand( B12, in5Minute, expandPoint ), 0 );
+FiveBB1 = Nz( TimeFrameExpand( BB1, in5Minute, expandPoint ), 0 );
+FiveBB2 = Nz( TimeFrameExpand( BB2, in5Minute, expandPoint ), 0 );
+FiveBB3 = Nz( TimeFrameExpand( BB3, in5Minute, expandPoint ), 0 );
+FiveBB4 = Nz( TimeFrameExpand( BB4, in5Minute, expandPoint ), 0 );
+FiveBB5 = Nz( TimeFrameExpand( BB5, in5Minute, expandPoint ), 0 );
+FiveBB6 = Nz( TimeFrameExpand( BB6, in5Minute, expandPoint ), 0 );
+FiveBB7 = Nz( TimeFrameExpand( BB7, in5Minute, expandPoint ), 0 );
+FiveBB8 = Nz( TimeFrameExpand( BB8, in5Minute, expandPoint ), 0 );
+FiveBB9 = Nz( TimeFrameExpand( BB9, in5Minute, expandPoint ), 0 );
+FiveBB10 = Nz( TimeFrameExpand( BB10, in5Minute, expandPoint ), 0 );
+FiveBB11 = Nz( TimeFrameExpand( BB11, in5Minute, expandPoint ), 0 );
+FiveBB12 = Nz( TimeFrameExpand( BB12, in5Minute, expandPoint ), 0 );
+FiveBB13 = Nz( TimeFrameExpand( BB13, in5Minute, expandPoint ), 0 );
+FiveBB14 = Nz( TimeFrameExpand( BB14, in5Minute, expandPoint ), 0 );
+FiveBB15 = Nz( TimeFrameExpand( BB15, in5Minute, expandPoint ), 0 );
+FiveBB16 = Nz( TimeFrameExpand( BB16, in5Minute, expandPoint ), 0 );
+FiveBB17 = Nz( TimeFrameExpand( BB17, in5Minute, expandPoint ), 0 );
+FiveCBB0 = Nz( TimeFrameExpand( CBB0, in5Minute, expandPoint ), 0 );
+FiveCBB1 = Nz( TimeFrameExpand( CBB1, in5Minute, expandPoint ), 0 );
+FiveCBB2 = Nz( TimeFrameExpand( CBB2, in5Minute, expandPoint ), 0 );
+FiveCBB3 = Nz( TimeFrameExpand( CBB3, in5Minute, expandPoint ), 0 );
+FiveCBB4 = Nz( TimeFrameExpand( CBB4, in5Minute, expandPoint ), 0 );
+FiveCBB5 = Nz( TimeFrameExpand( CBB5, in5Minute, expandPoint ), 0 );
+FiveCBB6 = Nz( TimeFrameExpand( CBB6, in5Minute, expandPoint ), 0 );
+FiveCBB7 = Nz( TimeFrameExpand( CBB7, in5Minute, expandPoint ), 0 );
+FiveCBB8 = Nz( TimeFrameExpand( CBB8, in5Minute, expandPoint ), 0 );
+FiveCBR = Nz( TimeFrameExpand( CBR, in5Minute, expandPoint ), 0 );
+FiveCBBR1 = Nz( TimeFrameExpand( CBBR1, in5Minute, expandPoint ), 0 );
+FiveCBBR2 = Nz( TimeFrameExpand( CBBR2, in5Minute, expandPoint ), 0 );
+FiveCBBR3 = Nz( TimeFrameExpand( CBBR3, in5Minute, expandPoint ), 0 );
+FiveCBBR4 = Nz( TimeFrameExpand( CBBR4, in5Minute, expandPoint ), 0 );
+FiveCBBR5 = Nz( TimeFrameExpand( CBBR5, in5Minute, expandPoint ), 0 );
+FiveCBBR6 = Nz( TimeFrameExpand( CBBR6, in5Minute, expandPoint ), 0 );
+FiveCBBR7 = Nz( TimeFrameExpand( CBBR7, in5Minute, expandPoint ), 0 );
+FiveSS1 = Nz( TimeFrameExpand( SS1, in5Minute, expandPoint ), 0 );
+FiveSS2 = Nz( TimeFrameExpand( SS2, in5Minute, expandPoint ), 0 );
+FiveSS3 = Nz( TimeFrameExpand( SS3, in5Minute, expandPoint ), 0 );
+FiveSS4 = Nz( TimeFrameExpand( SS4, in5Minute, expandPoint ), 0 );
+FiveSS5 = Nz( TimeFrameExpand( SS5, in5Minute, expandPoint ), 0 );
+FiveSS6 = Nz( TimeFrameExpand( SS6, in5Minute, expandPoint ), 0 );
+FiveSSR1 = Nz( TimeFrameExpand( SSR1, in5Minute, expandPoint ), 0 );
+FiveSSR2 = Nz( TimeFrameExpand( SSR2, in5Minute, expandPoint ), 0 );
+FiveSSR3 = Nz( TimeFrameExpand( SSR3, in5Minute, expandPoint ), 0 );
+FiveSSR4 = Nz( TimeFrameExpand( SSR4, in5Minute, expandPoint ), 0 );
+FiveSSR5 = Nz( TimeFrameExpand( SSR5, in5Minute, expandPoint ), 0 );
+FiveSSR6 = Nz( TimeFrameExpand( SSR6, in5Minute, expandPoint ), 0 );
+FiveSSR7 = Nz( TimeFrameExpand( SSR7, in5Minute, expandPoint ), 0 );
+FiveSSS = Nz( TimeFrameExpand( SSS, in5Minute, expandPoint ), 0 );
+FiveSSN = Nz( TimeFrameExpand( SSN, in5Minute, expandPoint ), 0 );
+FiveHigh = Nz( TimeFrameExpand( FiveHigh, in5Minute, expandPoint ), 0 );
+PreFiveMinOpen = TimeFrameExpand( PreFiveMinOpen, in5Minute, expandPoint );
+PreFiveMinHigh = TimeFrameExpand( PreFiveMinHigh, in5Minute, expandPoint );
+PreFiveMinLow = TimeFrameExpand( PreFiveMinLow, in5Minute, expandPoint );
+PreFiveMinClose = TimeFrameExpand( PreFiveMinClose, in5Minute, expandPoint );
+FiveStrengthPct = Nz( TimeFrameExpand( StrengthPct, in5Minute, expandPoint ), 0 );
+FiveUpperWick = Nz( TimeFrameExpand( UpperWick, in5Minute, expandPoint ), 0 );
+FiveLowerWick = Nz( TimeFrameExpand( LowerWick, in5Minute, expandPoint ), 0 );
+FiveCandleStrength = Nz( TimeFrameExpand( CandleStrength, in5Minute, expandPoint ), 0 );
+FiveATR_Strength = Nz( TimeFrameExpand( ATR_Strength, in5Minute, expandPoint ), 0 );
+FiveRSIValue = Nz( TimeFrameExpand( RSIValue, in5Minute, expandPoint ), 0 );
+FiveUpTrend = Nz( TimeFrameExpand( UpTrend, in5Minute, expandPoint ), 0 );
+FiveBullishTrend = Nz( TimeFrameExpand( BullishTrend, in5Minute, expandPoint ), 0 );
+FiveBullishTrendVol = Nz( TimeFrameExpand( BullishTrendVol, in5Minute, expandPoint ), 0 );
+FiveConfirmedBuy = Nz( TimeFrameExpand( ConfirmedBuy, in5Minute, expandPoint ), 0 );
+FiveDonTrendFilter = Nz( TimeFrameExpand( DonTrendFilter, in5Minute, expandPoint ), 0 );
+FiveATR3P = Nz( TimeFrameExpand( ATR3P, in5Minute, expandPoint ), 0 );
+FiveMACDLine = Nz( TimeFrameExpand( MACDLine, in5Minute, expandPoint ), 0 );
+FiveSignalLine = Nz( TimeFrameExpand( SignalLine, in5Minute, expandPoint ), 0 );
+FiveadxValue = Nz( TimeFrameExpand( adxValue, in5Minute, expandPoint ), 0 );
+FiveSlowK = Nz( TimeFrameExpand( SlowK, in5Minute, expandPoint ), 0 );
+FiveSlowD = Nz( TimeFrameExpand( SlowD, in5Minute, expandPoint ), 0 );
+FiveMiddleBand = Nz( TimeFrameExpand( MiddleBand, in5Minute, expandPoint ), 0 );
+FiveLowerBand = Nz( TimeFrameExpand( LowerBand, in5Minute, expandPoint ), 0 );
+FiveUpperBand = Nz( TimeFrameExpand( UpperBand, in5Minute, expandPoint ), 0 );
+FiveCSS = Nz( TimeFrameExpand( CSS, in5Minute, expandPoint ), 0 );
+/*
+// Calculate ATR in 1-minute timeframe
+TimeFrameSet(in1Minute); // Switch to 1-min TF
+ATR1Min = ATR(ATR_Period); // Compute ATR on 1-min bars
+TimeFrameRestore(); // Back to base 1-sec TF
+FiveATR1Min = TimeFrameExpand(ATR1Min, in1Minute, expandLast); // Expand to 1-sec (last value held constant within min)*/
+
+// Detect new 5-minute bar
+//newFiveMinBar = TimeFrameExpand(1, in5Minute, expandFirst) != Ref(TimeFrameExpand(1, in5Minute, expandFirst), -1);
+//newFiveMinBar = TimeNum() != Ref( TimeNum(), -1 ) AND TimeNum() % 50000 == 0;
+mn = Minute();
+newFiveMinBar = mn != Ref(mn, -1) AND (mn % 5 == 0);
+
+// Index conditions
+SetForeign( "SENSEX.BSE_IDX" );
+SenyesterdaysClose = TimeFrameGetPrice( "C", inDaily, -1 );
+SenTodayOpen = TimeFrameGetPrice( "O", inDaily );
+SenClose = C;
+RestorePriceArrays();
+
+SetForeign( "NIFTY 50.NSE_IDX" );
+NifyesterdaysClose = TimeFrameGetPrice( "C", inDaily, -1 );
+NifTodayOpen = TimeFrameGetPrice( "O", inDaily );
+NifClose = C;
+RestorePriceArrays();
+
+SetForeign( "NIFTY BANK.NSE_IDX" );
+BnifyesterdaysClose = TimeFrameGetPrice( "C", inDaily, -1 );
+BnifTodayOpen = TimeFrameGetPrice( "O", inDaily );
+BnifClose = C;
+RestorePriceArrays();
+
+X = SenClose - SenyesterdaysClose;
+Y = NifClose - NifyesterdaysClose;
+Z = BnifClose - BnifyesterdaysClose;
+XX = SenTodayOpen - SenClose;
+YY = NifTodayOpen - NifClose;
+ZZ = BnifTodayOpen - BnifClose;
+
+Index = ( ( X * Y > 0 ) AND( X * Z > 0 ) AND( Y * Z > 0 ) AND( abs( X ) > 2 * abs( Y ) ) AND( abs( Z ) > 1.4 * abs( Y ) ) ) OR
+        ( ( XX * YY > 0 ) AND( XX * ZZ > 0 ) AND( YY * ZZ > 0 ) AND( abs( XX ) > 2 * abs( YY ) ) AND( abs( ZZ ) > 1.4 * abs( YY ) ) );
+
+// === TIME ===
+dt = DateTime();
+secondsSinceMidnight = DateTimeConvert( 3, dt );
+/****************************************Seconds Defination****************************************/
+function GetSecondNum()
+{
+    Time = Now( 4 );
+    Seconds = int( Time % 100 );
+    Minutes = int( Time / 100 % 100 );
+    Hours = int( Time / 10000 % 100 );
+    SecondNum = int( Hours * 60 * 60 + Minutes * 60 + Seconds );
+    return SecondNum;
+}
+RequestTimedRefresh( 1 , onlyvisible=False);
+TimeFrame = Interval();
+SecNumber = GetSecondNum();
+/*Newperiod = SecNumber % TimeFrame = 0;
+SecsLeft = SecNumber - int( SecNumber / TimeFrame ) * TimeFrame;
+SecsToGo = TimeFrame - SecsLeft; */
+/***************************************************************************************************************/
+// Time and trading window definitions
+tn = TimeNum();
+startTime = 092500;
+endTime = 103000;
+timeOK = tn >= startTime AND tn <= endTime;
+startTime1 = 132000;
+endTime1 = 145500;
+timeOK1 = tn >= startTime1 AND tn <= endTime1;
+startTime2 = 92500;
+endTime2 = 152500;
+timeOK2 = tn >= startTime2 AND tn <= endTime2;
+ForcesellTime = 151000;
+
+/****************************************** Testbed3 Code - Refactored Version *******************************************/
+// ========================== SECTION 1: PARAMETERS ==========================
+_SECTION_BEGIN("ATR Trailing Params");
+ATRPeriod_Trail = Param("ATR Period for Trailing Stop", 14, 1, 50, 1);
+ATRMult_Trail = Param("ATR Multiplier for Trailing Stop", 2, 0.5, 5, 0.1);
+_SECTION_END();
+
+_SECTION_BEGIN("Breach Confirmation Params");
+ATRPeriod_Scale = Param("ATR Period for Scaling Streak", 14, 1, 50, 1);
+ATR_MA_Period = Param("MA Period for Normalized ATR", 20, 1, 100, 1);
+ATRMult_Scale = Param("ATR Multiplier for Scaling", 1.5, 0.5, 5, 0.1);
+Base_Streak = Param("Base Consecutive Bars", 3, 1, 10, 1);
+Streak_Floor = Param("Min Required Streak", 3, 1, 10, 1);
+Streak_Cap = Param("Max Required Streak", 7, 1, 20, 1);
+RSI_Period = Param("RSI Period for Weakness Qualifier", 9, 2, 30, 1);
+RSI_Threshold = Param("RSI < This = Weakness Bar", 35, 20, 60, 1);
+ResetStatics = ParamToggle("Reset All Statics (Run Once)", "No|Yes", 0);
+_SECTION_END();
+
+_SECTION_BEGIN("TRADE HISTORY PARAMETERS");
+MaxTradesStored = Param("Max Trades to Store", 500, 100, 5000, 100);
+ClearTradeHistory = ParamTrigger("Clear All Trade History", "CLICK TO CLEAR");
+_SECTION_END();
+
+SetBarsRequired(sbrAll, sbrAll);
+RequestTimedRefresh(1, True);
+
+// ========================== SECTION 2: TIMEFRAME BOUNDARIES ==========================
+// Define 5-min and 1-min boundaries (unchanged)
+TimeFrameSet(in5Minute);
+tempTime5 = TimeNum();
+TimeFrameRestore();
+tempTime5Start = TimeFrameExpand(tempTime5, in5Minute, expandFirst);
+newFiveMinBar = !IsNull(tempTime5Start);
+
+TimeFrameSet(in1Minute);
+tempTime1 = TimeNum();
+TimeFrameRestore();
+tempTime1Start = TimeFrameExpand(tempTime1, in1Minute, expandFirst);
+tempTime1End = TimeFrameExpand(tempTime1, in1Minute, expandLast);
+newOneMinBarStart = !IsNull(tempTime1Start);
+newOneMinBarEnd = !IsNull(tempTime1End);
+
+// ========================== SECTION 3: PRE-CALCULATIONS (1-min indicators) ==========================
+TimeFrameSet(in1Minute);
+ATRVal1m = ATR(ATRPeriod_Trail);
+RSIVal1m = RSI(RSI_Period);
+AvgATR1m = MA(ATR(ATRPeriod_Scale), ATR_MA_Period);
+NormATR1m = ATR(ATRPeriod_Scale) / AvgATR1m;
+RequiredStreak1m = Max(Streak_Floor, Min(Streak_Cap, Base_Streak + Round(NormATR1m * ATRMult_Scale)));
+IsWeakBar1m = RSIVal1m < RSI_Threshold;
+High1Min = High; 
+TimeFrameRestore();
+
+// Expand and fill forward (unchanged)
+ATRVal = TimeFrameExpand(ATRVal1m, in1Minute, expandLast);
+RequiredStreak = TimeFrameExpand(RequiredStreak1m, in1Minute, expandLast);
+IsWeakBar = TimeFrameExpand(IsWeakBar1m, in1Minute, expandLast);
+High1Min = TimeFrameExpand(High1Min, in1Minute, expandPoint);
+
+// Forward-fill logic (unchanged)
+ATRValFilled = Null; RequiredStreakFilled = Null; IsWeakBarFilled = Null;
+currentATR = currentReq = currentWeak = 0;
+for (i = 0; i < BarCount; i++) {
+    if (!IsNull(ATRVal[i])) currentATR = ATRVal[i];
+    ATRValFilled[i] = currentATR;
+    if (!IsNull(RequiredStreak[i])) currentReq = RequiredStreak[i];
+    RequiredStreakFilled[i] = currentReq;
+    if (!IsNull(IsWeakBar[i])) currentWeak = IsWeakBar[i];
+    IsWeakBarFilled[i] = currentWeak;
+}
+
+dt = DateTime();
+
+// ========================== SECTION 4: STATIC STATE INITIALIZATION ==========================
+// Symbol-unique prefix
+Sym = Name() + StrFormat("%g", GetChartID());
+
+// Load persistent state from statics (this is the ONLY place we read them)
+InPosition = Nz(StaticVarGet(Sym + "_InPosition"), 0);
+EntryPriceStatic = Nz(StaticVarGet(Sym + "_EntryPrice"), 0);
+EntryTimeStatic = StaticVarGet(Sym + "_EntryTime");
+EntryBarStatic = Nz(StaticVarGet(Sym + "_EntryBar"), -1);
+StopLossCurrent = Nz(StaticVarGet(Sym + "_StopLoss"), 0);
+TrailStopLossCurrent = Nz(StaticVarGet(Sym + "_TrailStopLoss"), 0);
+TrailStartFlagCurrent = Nz(StaticVarGet(Sym + "_TrailStartFlag"), 0);
+BreakevenFlagCurrent = Nz(StaticVarGet(Sym + "_BreakevenFlag"), 0);
+ProfitLockFlagCurrent = Nz(StaticVarGet(Sym + "_ProfitLockFlag"), 0);
+MaxProfitCurrent = Nz(StaticVarGet(Sym + "_MaxProfit"), 0);
+BreachFlagCurrent = Nz(StaticVarGet(Sym + "_BreachFlag"), 0);
+BreachStartBarCurrent = Nz(StaticVarGet(Sym + "_BreachStartBar"), -1);
+BarsBreachedCurrent = Nz(StaticVarGet(Sym + "_BarsBreached"), 0);
+ConsecutiveStreakCurrent = Nz(StaticVarGet(Sym + "_ConsecutiveStreak"), 0);
+FixedEntryPriceCurrent = Nz(StaticVarGet(Sym + "_FixedEntryPrice"), 0);
+TrailStopLossCurrent = StaticVarGet(Sym + "_TrailStopLossCurrent");
+if (IsNull(TrailStopLossCurrent) OR TrailStopLossCurrent == False) TrailStopLossCurrent = 0;
+
+// Reset statics if requested
+if (ResetStatics) {
+    StaticVarRemove(Sym + "_InPosition");
+    StaticVarRemove(Sym + "_EntryPrice");
+    StaticVarRemove(Sym + "_EntryTime");
+    StaticVarRemove(Sym + "_EntryBar");
+    StaticVarRemove(Sym + "_StopLoss");
+    StaticVarRemove(Sym + "_TrailStopLoss");
+    StaticVarRemove(Sym + "_TrailStartFlag");
+    StaticVarRemove(Sym + "_BreakevenFlag");
+    StaticVarRemove(Sym + "_ProfitLockFlag");
+    StaticVarRemove(Sym + "_MaxProfit");
+    StaticVarRemove(Sym + "_BreachFlag");
+    StaticVarRemove(Sym + "_BreachStartBar");
+    StaticVarRemove(Sym + "_BarsBreached");
+    StaticVarRemove(Sym + "_ConsecutiveStreak");
+    StaticVarRemove(Sym + "_FixedEntryPrice");
+	FixedEntryPriceCurrent = 0; // Reset local too
+    InPosition = 0; // reset locals too
+}
+
+// Trade history (unchanged)
+TradeCount = Nz(StaticVarGet(Sym + "_TradeCount"), 0);
+LastRecordedBar = Nz(StaticVarGet(Sym + "_LastRecordedBar"), -1);
+
+if (ClearTradeHistory OR ResetStatics) {
+    StaticVarSet(Sym + "_TradeCount", 0);
+    StaticVarRemove(Sym + "_LastRecordedBar");
+    for (i = 0; i < MaxTradesStored; i++) {
+        StaticVarRemove(Sym + "_Trade_EntryPrice_" + i);
+        StaticVarRemove(Sym + "_Trade_EntryTime_" + i);
+        StaticVarRemove(Sym + "_Trade_EntryBar_" + i);
+        StaticVarRemove(Sym + "_Trade_ExitPrice_" + i);
+        StaticVarRemove(Sym + "_Trade_ExitTime_" + i);
+        StaticVarRemove(Sym + "_Trade_ExitBar_" + i);
+    }
+    TradeCount = 0;
+    LastRecordedBar = -1;
+    _TRACE("Trade history cleared for " + Sym);
+}
+
+// ========================== SECTION 5: SIGNAL DEFINITIONS (Green/Red/MA1) ==========================
+// Assuming FiveBB*/FiveCBB* etc. are defined elsewhere in your full code
+Green = ( ( ( FiveBB1 OR FiveBB2 OR FiveBB3 OR FiveBB4 OR
+              FiveBB5 OR FiveBB6 OR FiveBB7 OR FiveBB8 OR
+              FiveBB9 OR FiveBB10 OR FiveBB11 ) AND
+            Ref(FiveBB12, -1) AND FiveB0 ) OR
+          FiveBB13 OR FiveBB14 OR FiveBB15 OR FiveBB16 ) AND FiveB0;
+
+Red = FiveCBB1 OR FiveCBB2 OR FiveCBB3 OR FiveCBB4 OR
+      FiveCBB5 OR FiveCBB6 OR FiveCBB7 OR FiveCBBR3 OR
+      FiveCBBR4 OR FiveCBBR5 OR FiveCBBR6 OR FiveCBBR7 OR FiveNRCB;
+
+MA1 = (Green OR Red);
+
+// ========================== SECTION 6: MAIN TRADING LOOP ==========================
+Buy = Sell = Short = Cover = 0;
+LongFlag = TradeEntryPrice = TradeEntryTime = EntryBarArray = TradeExitPrice = TradeExitTime = SellBar = FixedEntryPrice = Null;
+StopLoss = TrailStopLoss = MaxProfit = Breach = BreachFlag = BreachStartBar = BarsBreached = ConsecutiveStreak = BreakevenFlag = ProfitLockFlag = TrailStartFlag = Null;
+
+currentMinHigh = currentMinClose = 0;
+
+for (i = 1; i < BarCount; i++) {
+    // Update 1-min aggregates every bar (real-time friendly)
+    if (newOneMinBarStart[i]) {
+        currentMinHigh = H[i];
+        currentMinClose = C[i-1];
+    } else {
+        currentMinHigh = Max(currentMinHigh, H[i]);
+        currentMinClose = C[i-1];
+    }
+
+    Buy[i] = Sell[i] = 0;
+
+    // Set current bar state from persistent values
+    LongFlag[i] = InPosition;
+    FixedEntryPrice[i] = FixedEntryPriceCurrent;
+    TradeEntryPrice[i] = EntryPriceStatic;
+    TradeEntryTime[i] = EntryTimeStatic;
+    EntryBarArray[i] = EntryBarStatic;
+    StopLoss[i] = StopLossCurrent;
+    TrailStopLoss[i] = TrailStopLossCurrent;
+    TrailStartFlag[i] = TrailStartFlagCurrent;
+    BreakevenFlag[i] = BreakevenFlagCurrent;
+    ProfitLockFlag[i] = ProfitLockFlagCurrent;
+    MaxProfit[i] = MaxProfitCurrent;
+    BreachFlag[i] = BreachFlagCurrent;
+    BreachStartBar[i] = BreachStartBarCurrent;
+    BarsBreached[i] = BarsBreachedCurrent;
+    ConsecutiveStreak[i] = ConsecutiveStreakCurrent;
+
+    // BUY LOGIC - only when flat
+    if (InPosition == 0 && MA1[i] && !MA1[i-1]) {  // your final entry condition here
+        Buy[i] = 1;
+
+        // Set entry state (once)
+        //EntryPriceStatic = O[i];
+        //EntryPriceStatic = Max(PreFiveMinHigh[i], High1Min[i-1]);
+        EntryPriceStatic = Max(PreFiveMinHigh[i], O[i]);
+		prevFixedFromArray = IIf(i > 0, FixedEntryPrice[i-1], 0); // Handle first bar edge case
+		/*if (prevFixedFromArray == 0 && FixedEntryPriceCurrent == 0) {
+			//EntryPriceStatic = O[i-1];
+			FixedEntryPriceCurrent = EntryPriceStatic; // Set to current entry price
+			StaticVarSet(Sym + "_FixedEntryPrice", FixedEntryPriceCurrent); // Persist
+		}*/
+		FixedEntryPriceCurrent = EntryPriceStatic; // Set to current entry price
+		StaticVarSet(Sym + "_FixedEntryPrice", FixedEntryPriceCurrent); // Persist
+		FixedEntryPrice[i] = FixedEntryPriceCurrent; // Always update array for this bar
+		EntryTimeStatic = dt[i];
+        EntryBarStatic = i;
+        InPosition = 1;
+
+        //StopLossCurrent = O[i] * 0.98;
+        StopLossCurrent = FixedEntryPriceCurrent * 0.98;
+        TrailStopLossCurrent = StopLossCurrent;
+        MaxProfitCurrent = 0;
+        TrailStartFlagCurrent = 0;
+        BreakevenFlagCurrent = 0;
+        ProfitLockFlagCurrent = 0;
+        BreachFlagCurrent = 0;
+        BreachStartBarCurrent = -1;
+        BarsBreachedCurrent = 0;
+        ConsecutiveStreakCurrent = 0;
+
+        // Persist to statics
+        StaticVarSet(Sym + "_InPosition", InPosition);
+        StaticVarSet(Sym + "_EntryPrice", EntryPriceStatic);
+        StaticVarSet(Sym + "_EntryTime", EntryTimeStatic);
+        StaticVarSet(Sym + "_EntryBar", EntryBarStatic);
+        StaticVarSet(Sym + "_StopLoss", StopLossCurrent);
+        StaticVarSet(Sym + "_TrailStopLoss", TrailStopLossCurrent);
+        //StaticVarSet(Sym + "_TrailStartFlag", TrailStartFlagCurrent);
+        //StaticVarSet(Sym + "_BreakevenFlag", BreakevenFlagCurrent);
+        //StaticVarSet(Sym + "_ProfitLockFlag", ProfitLockFlagCurrent);
+        StaticVarSet(Sym + "_MaxProfit", MaxProfitCurrent);
+        StaticVarSet(Sym + "_BreachFlag", BreachFlagCurrent);
+        StaticVarSet(Sym + "_BreachStartBar", BreachStartBarCurrent);
+        StaticVarSet(Sym + "_BarsBreached", BarsBreachedCurrent);
+        StaticVarSet(Sym + "_ConsecutiveStreak", ConsecutiveStreakCurrent);
+        StaticVarSet(Sym + "_FixedEntryPrice", FixedEntryPriceCurrent);
+
+        // Update arrays for this bar
+        LongFlag[i] = 1;
+        TradeEntryPrice[i] = EntryPriceStatic;
+        TradeEntryTime[i] = EntryTimeStatic;
+        EntryBarArray[i] = EntryBarStatic;
+        StopLoss[i] = StopLossCurrent;
+
+        // Record new trade
+        if (i > LastRecordedBar && TradeCount < MaxTradesStored) {
+            StaticVarSet(Sym + "_Trade_EntryPrice_" + TradeCount, EntryPriceStatic);
+            StaticVarSet(Sym + "_Trade_EntryTime_" + TradeCount, EntryTimeStatic);
+            StaticVarSet(Sym + "_Trade_EntryBar_" + TradeCount, EntryBarStatic);
+            StaticVarSet(Sym + "_Trade_ExitPrice_" + TradeCount, 0);
+            StaticVarSet(Sym + "_Trade_ExitTime_" + TradeCount, 0);
+            StaticVarSet(Sym + "_Trade_ExitBar_" + TradeCount, -1);
+            TradeCount++;
+            StaticVarSet(Sym + "_TradeCount", TradeCount);
+            StaticVarSet(Sym + "_LastRecordedBar", i);
+            _TRACE("New trade recorded: #" + TradeCount + " Entry=" + EntryPriceStatic);
+        }
+    }
+	
+    // IN-POSITION LOGIC (updates + sell)
+    if (InPosition == 1 || (InPosition == 0 && newOneMinBarEnd[i] && !MA1[i])) {
+        // Update max profit with current min high
+        CurProfit = (currentMinHigh - FixedEntryPriceCurrent) / FixedEntryPriceCurrent * 100;
+        MaxProfitCurrent = Max(MaxProfitCurrent, CurProfit);
+
+        if (MaxProfitCurrent >= 2 && BreakevenFlagCurrent == 0) BreakevenFlagCurrent = 1;
+        if (MaxProfitCurrent >= 5 && ProfitLockFlagCurrent == 0) ProfitLockFlagCurrent = 1;
+
+        StopLossCurrent = FixedEntryPriceCurrent * 
+                          IIf(ProfitLockFlagCurrent, 1.02, 
+                          IIf(BreakevenFlagCurrent, 1.00, 0.98));
+
+        if (MaxProfitCurrent >= 8 && TrailStartFlagCurrent == 0) TrailStartFlagCurrent = 1;
+        
+        
+        if (TrailStartFlagCurrent)
+            TrailStopLossCurrent = Max(Max(TrailStopLossCurrent, currentMinHigh - ATRValFilled[i] * ATRMult_Trail), StopLossCurrent);
+            StaticVarSet(Sym + "_TrailStopLossCurrent", TrailStopLossCurrent);
+
+        effective_stop = IIf(TrailStartFlagCurrent, TrailStopLossCurrent, StopLossCurrent);
+
+        // Breach & streak logic
+        if (currentMinClose < effective_stop && TrailStartFlagCurrent == 1)/* && IsWeakBarFilled[i]) */{
+            if (BreachFlagCurrent == 0) {
+                BreachFlagCurrent = 1;
+                BreachStartBarCurrent = i;
+            }
+            BarsBreachedCurrent++;
+            ConsecutiveStreakCurrent++;
+        } else if (currentMinClose < effective_stop) {
+            ConsecutiveStreakCurrent = 0;
+        } else {
+            ConsecutiveStreakCurrent = 0;
+        }
+
+        // Update arrays
+        MaxProfit[i] = MaxProfitCurrent;
+        Breach[i] = (currentMinClose < effective_stop);
+        BreachFlag[i] = BreachFlagCurrent;
+        BreachStartBar[i] = BreachStartBarCurrent;
+        BarsBreached[i] = BarsBreachedCurrent;
+        ConsecutiveStreak[i] = ConsecutiveStreakCurrent;
+        StopLoss[i] = StopLossCurrent;
+        TrailStopLoss[i] = TrailStopLossCurrent;
+        TrailStartFlag[i] = TrailStartFlagCurrent;
+        BreakevenFlag[i] = BreakevenFlagCurrent;
+        ProfitLockFlag[i] = ProfitLockFlagCurrent;
+        profit10 = FixedEntryPriceCurrent  * 1.10; 
+
+        // SELL LOGIC
+        if (currentMinClose < effective_stop && TrailStartFlagCurrent == 0 
+			|| TrailStartFlagCurrent == 1 && currentMinClose < effective_stop && ConsecutiveStreakCurrent >=  RequiredStreakFilled[i]
+			|| TrailStartFlagCurrent == 1 && MaxProfitCurrent > 10 && currentMinClose < profit10) {
+            Sell[i] = 1;
+
+            TradeExitPrice[i] = currentMinClose ;//effective_stop;
+            TradeExitTime[i] = dt[i];
+            SellBar[i] = i;
+
+            // Reset position state (once)
+            InPosition = 0;
+            prevFixedFromArray = IIf(i > 0, FixedEntryPrice[i-1], 0); // Consistent check
+			if (prevFixedFromArray > 0 && FixedEntryPriceCurrent > 0) {
+				FixedEntryPriceCurrent = 0;
+				StaticVarSet(Sym + "_FixedEntryPrice", 0);
+			}
+			FixedEntryPrice[i] = FixedEntryPriceCurrent;
+            //FixedEntryPriceCurrent = 0;
+			TrailStartFlagCurrent = 0;
+            BreachFlagCurrent = 0;
+            BreakevenFlagCurrent = 0;
+            ProfitLockFlagCurrent = 0;
+            MaxProfitCurrent = 0;
+            BarsBreachedCurrent = 0;
+            ConsecutiveStreakCurrent = 0;
+            // Entry details persist until next buy (as per your request), but can be cleared if needed
+
+            // Persist resets
+            StaticVarSet(Sym + "_InPosition", 0);
+            StaticVarSet(Sym + "_TrailStartFlag", 0);
+            StaticVarSet(Sym + "_BreakevenFlag", 0);
+            StaticVarSet(Sym + "_ProfitLockFlag", 0);
+            StaticVarSet(Sym + "_MaxProfit", 0);
+            StaticVarSet(Sym + "_BreachFlag", 0);
+            StaticVarSet(Sym + "_BarsBreached", 0);
+            StaticVarSet(Sym + "_ConsecutiveStreak", 0);
+            StaticVarSet(Sym + "_FixedEntryPrice", FixedEntryPriceCurrent);
+            TrailStopLossCurrent = 0;
+			StaticVarSet(Sym + "_TrailStopLossCurrent", 0);
+
+            // Update arrays
+            LongFlag[i] = 0;
+            FixedEntryPrice[i] = 0;
+
+            // Record exit
+            if (i > LastRecordedBar) {
+                for (t = TradeCount - 1; t >= 0; t--) {
+                    if (StaticVarGet(Sym + "_Trade_ExitBar_" + t) == -1) {
+                        StaticVarSet(Sym + "_Trade_ExitPrice_" + t, currentMinClose);
+                        StaticVarSet(Sym + "_Trade_ExitTime_" + t, dt[i]);
+                        StaticVarSet(Sym + "_Trade_ExitBar_" + t, i);
+                        _TRACE("Trade #" + (t + 1) + " closed at " + currentMinClose);
+                        break;
+                    }
+                }
+                StaticVarSet(Sym + "_LastRecordedBar", i);
+            }
+        }
+    }
+   
+}
+
+// ========================== SECTION 7: POST-PROCESSING & PLOTTING ==========================
+Buy = ExRem(Buy, Sell);
+Sell = ExRem(Sell, Buy);
+
+// Fix for disappearing arrows
+entrySignal = LongFlag AND (LongFlag != Ref(LongFlag, -1));
+exitSignal = Ref(LongFlag, -1) AND (LongFlag == 0);
+entrySignal = ExRem(entrySignal, exitSignal);
+exitSignal = ExRem(exitSignal, entrySignal);
+
+Plot(C, "Close", colorDefault, styleCandle);
+PlotShapes(entrySignal * shapeUpArrow, colorGreen, 0, L, -30);
+PlotShapes(exitSignal * shapeDownArrow, colorYellow, 0, H, -30);
+
+// ========================== SECTION 8: INTERPRETATION WINDOW (unchanged except variable names) ==========================
+if (Status("action") == actionIndicator) {
+    _N(Title = "");
+    currentBar = SelectedValue(BarIndex());
+    if (currentBar == -1) currentBar = BarCount - 1;
+
+    latestTradeIdx = -1;
+    for (t = 0; t < TradeCount; t++) {
+        entryBar_t = StaticVarGet(Sym + "_Trade_EntryBar_" + t);
+        if (!IsNull(entryBar_t) && entryBar_t <= currentBar)
+            latestTradeIdx = t;
+    }
+
+    printf("=== SYSTEM STATUS AT BAR %g ===\n", currentBar);
+    printf("Date/Time: %s\n\n", DateTimeToStr(SelectedValue(dt)));
+
+    if (SelectedValue(LongFlag) == 1 || InPosition == 1)
+        printf("POSITION : IN LONG\n");
+    else
+        printf("POSITION : FLAT\n");
+
+    printf("InPosition (Static): %g\n", InPosition);
+    printf("LongFlag (Array at Bar): %g\n", SelectedValue(LongFlag));
+
+    if (latestTradeIdx >= 0) {
+        EntryP = StaticVarGet(Sym + "_Trade_EntryPrice_" + latestTradeIdx);
+        EntryT = StaticVarGet(Sym + "_Trade_EntryTime_" + latestTradeIdx);
+        EntryB = StaticVarGet(Sym + "_Trade_EntryBar_" + latestTradeIdx);
+        ExitP = StaticVarGet(Sym + "_Trade_ExitPrice_" + latestTradeIdx);
+        ExitT = StaticVarGet(Sym + "_Trade_ExitTime_" + latestTradeIdx);
+        ExitB = StaticVarGet(Sym + "_Trade_ExitBar_" + latestTradeIdx);
+
+        printf("\n>>> TRADE #%g <<<\n", latestTradeIdx + 1);
+        printf("Entry Price : %.2f\n", EntryP);
+        printf("Entry Time : %s\n", DateTimeToStr(EntryT));
+        printf("Entry Bar : %g\n", EntryB);
+
+        if (ExitB >= 0) {
+            printf("EXIT Price : %.2f (P&L: %.2f%%)\n", ExitP, (ExitP - EntryP)/EntryP * 100);
+            printf("EXIT Time : %s\n", DateTimeToStr(ExitT));
+            printf("EXIT Bar : %g\n\n", ExitB);
+        } else {
+            printf("EXIT : STILL OPEN\n\n");
+        }
+    } else {
+        printf("\nNo trades found up to this bar.\n\n");
+    }
+
+    printf("=== KEY PARAMETERS & STATE ===\n");
+    printf("Required Streak : %g\n", SelectedValue(RequiredStreakFilled));
+    printf("Current Streak : %g\n", SelectedValue(ConsecutiveStreak));
+    printf("Bars Breached : %g\n", SelectedValue(BarsBreached));
+    printf("Fixed Stop Loss : %.2f\n", SelectedValue(StopLoss));
+    printf("Trailing Stop : %.2f\n", SelectedValue(TrailStopLoss));
+    printf("Max Profit %% : %.2f\n\n", SelectedValue(MaxProfit));
+    printf("Fixed Entry Price : %.2f\n", SelectedValue(FixedEntryPrice));
+
+    printf("Close : %.2f\n", SelectedValue(C));
+    printf("Buy Signal : %g\n", SelectedValue(Buy));
+    printf("Sell Signal : %g\n", SelectedValue(Sell));
+}
+
+// ========================== SECTION 9: EXPLORATION & BACKTEST SETTINGS ==========================
+if (Status("action") == actionExplore) {
+    Filter = LongFlag OR Nz(Ref(LongFlag, -1), 0);
+    AddColumn(InPosition, "InPos", 1.0);
+    AddColumn(LongFlag, "LongFlag", 1.0);
+    AddColumn(BreakevenFlag, "BreakevenFlag", 1.0);
+    AddColumn(ProfitLockFlag, "ProfitLockFlag", 1.0);
+    AddColumn(FixedEntryPrice, "FixedEntryPrice", 1.2);
+    AddColumn(TradeEntryPrice, "EntryPrice", 1.2);
+    AddColumn(Close, "Close", 1.2);
+    AddColumn(EntryBarArray, "EntryBar", 1.0);
+    AddColumn(TradeExitPrice, "ExitPrice", 1.2);
+    AddColumn(StopLoss, "StopLoss", 1.2);
+    AddColumn(TrailStopLoss, "TrailSL", 1.2);
+    AddColumn(MaxProfit, "MaxProfit%", 1.2);
+    AddColumn(RequiredStreakFilled, "ReqStreak", 1.0);
+    AddColumn(ConsecutiveStreak, "CurStreak", 1.0);
+    AddColumn(Breach, "Breach", 1.0);
+}
+
+SetOption("MaxOpenPositions", 1);
+SetTradeDelays(0, 0, 0, 0);
+SetPositionSize(900, spsShares);
+
+Title = Name() + " (Bar #" + BarIndex() + " of " + BarCount + ") - ";
