@@ -3,19 +3,22 @@ import time
 from datetime import datetime
 import csv
 import io
+import logging
+from tabulate import tabulate  # For readable table
 
-#from mono_engine.core import ModuleBase
+import json  # For watchlist JSON
 
-#class SensexOptions(ModuleBase):
 class SensexOptions:
     def __init__(self, engine):
-        #super().__init__(engine)
         self.name = "sensex_options"
         self.spot_token = None
         self.options_file = 'symbols_BSEOptions.csv'
         self.index_file = 'symbols_Index.csv'
         self.cache_file = 'last_sensex_open.txt'
         self.sensex_options = {}
+        self.engine = engine
+        self.watchlist = []
+        self.watchlist_file = 'watchlist.json'
         self.load_symbols()
 
     def load_symbols(self):
@@ -52,43 +55,72 @@ class SensexOptions:
                 if 'SENSEX' in row['id']:
                     parts = row['id'].split('_')
                     if len(parts) >= 6:
-                        expiry = parts[3]
+                        expiry_str = parts[3]  # YYYY-MM-DD
                         strike = int(parts[4])
                         opt_type = parts[5]
-                        key = (expiry, strike, opt_type)
-                        self.sensex_options[key] = {
+                        self.sensex_options[(expiry_str, strike, opt_type)] = {
+                            'dispName': row['dispName'],
                             'token': row['excToken'],
-                            'dispName': row['dispName']
+                            'lot': row['lot'],
+                            'weekly': row['weekly']
                         }
 
-    def start(self):
-        print(f"{self.name} starting — SENSEX options workflow")
-        self.engine.streamer.subscribe([self.spot_token])  # Subscribe spot for open
-
-        # Wait for open
-        max_retries = 10
-        retry_delay = 60
-        for attempt in range(max_retries):
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r') as f:
-                    day_open = float(f.read().strip())
-                print(f"Open: {day_open}")
-                break
-            if datetime.now().weekday() >= 5:
-                day_open = float(input("Weekend — manual open: "))
-                break
-            print(f"Waiting open... ({attempt+1})")
-            time.sleep(retry_delay)
+    def _load_watchlist(self):
+        if os.path.exists(self.watchlist_file):
+            with open(self.watchlist_file, 'r') as f:
+                self.watchlist = json.load(f)
+            logging.info(f"Loaded {len(self.watchlist)} items from watchlist.json")
         else:
-            day_open = float(input("No open — manual: "))
+            self.watchlist = []
 
-        # Grid calculation and logic (copy from earlier code — table, selection, chosen_symbols, subscribe, live loop)
+    def _save_watchlist(self):
+        with open(self.watchlist_file, 'w') as f:
+            json.dump(self.watchlist, f, indent=4)
+        logging.info(f"Saved watchlist with {len(self.watchlist)} items")
+
+    def _parse_selection(self, selection, grid):
+        selected = []
+        if selection == 'all':
+            selected = list(range(1, len(grid) + 1))
+        else:
+            parts = selection.split(',')
+            for part in parts:
+                if '-' in part:
+                    start, end = map(int, part.split('-'))
+                    selected.extend(range(start, end + 1))
+                else:
+                    selected.append(int(part))
+        return selected
+
+    def start(self):
+        logging.info("sensex_options starting — SENSEX options workflow")
+        if self.spot_token is None:
+            logging.error("SENSEX spot token not found — check symbols_Index.csv")
+            return
+
+        # Subscribe spot for open capture
+        spot_symbol = f"{self.spot_token}_BSE"
+        self.engine.streamer.subscribe_l1([spot_symbol])
+        if hasattr(self.engine.streamer, 'subscribeL1SnapShot'):
+            self.engine.streamer.subscribeL1SnapShot([spot_symbol])
+        logging.info(f"Subscribed L1 + snapshot for spot: {spot_symbol}")
+
+        # Get day_open (from cache or tick)
+        if os.path.exists(self.cache_file):
+            with open(self.cache_file, 'r') as f:
+                day_open = float(f.read().strip())
+            logging.info(f"Loaded last trading day's open from cache: {day_open}")
+        else:
+            day_open = 83968.43  # Fallback
+            logging.info(f"Using fallback day open: {day_open}")
+
+        # Strike grid logic
         strike_interval = 100
         num_offsets = 10
         base_strike = round(day_open / strike_interval) * strike_interval
         ce_strikes = [base_strike + (i * strike_interval) for i in range(1, num_offsets + 1)]
         pe_strikes = [base_strike - (i * strike_interval) for i in range(1, num_offsets + 1)]
-        target_strikes = sorted(pe_strikes + ce_strikes + [base_strike]) # + ATM
+        target_strikes = sorted(pe_strikes + ce_strikes + [base_strike])  # + ATM
 
         # Nearest weekly
         today = datetime.now()
@@ -97,6 +129,13 @@ class SensexOptions:
         nearest_weekly = min([e for e in weekly_expiries if e[0] >= today], key=lambda x: x[0], default=weekly_expiries[0])
         target_expiry = nearest_weekly[1]
         print(f"Weekly: {target_expiry}")
+
+        # Check if to clear watchlist (only on Friday)
+        if today.weekday() == 4:  # Friday
+            self.watchlist = []
+            logging.info("Cleared watchlist for new week")
+        else:
+            self._load_watchlist()
 
         # Grid
         grid = []
@@ -107,14 +146,32 @@ class SensexOptions:
             pe_disp = self.sensex_options.get(pe_key, {}).get('dispName', 'N/A')
             offset = strike - base_strike
             class_type = 'ATM' if offset == 0 else 'ITM' if offset < 0 else 'OTM'
-            grid.append((i, strike, class_type, ce_disp, pe_disp, offset))
+            grid.append([i, strike, class_type, ce_disp, pe_disp, offset])
 
-        # Table
+        # Table (readable with tabulate)
         print("\nGrid (select 1,3,5-7 or all)")
-        print("| # | Strike | Type | CE Symbol | PE Symbol | Offset |")
-        print("|---|--------|------|-----------|-----------|--------|")
-        for item in grid:
-            print(f"| {item[0]:<1} | {item[1]:<6} | {item[2]:<4} | {item[3]:<30} | {item[4]:<30} | {item[5]:<6} |")
+        print(tabulate(grid, headers=["#", "Strike", "Type", "CE Symbol", "PE Symbol", "Offset"], tablefmt="grid"))
+
+        # Prompt for selection
+        selection = input("\nEnter row numbers to add to watchlist (comma-separated/ranges, e.g., '1,3-5,7', or 'all' for everything): ").strip().lower()
+        if selection:
+            selected_rows = self._parse_selection(selection, grid)
+            for row_num in selected_rows:
+                if 1 <= row_num <= len(grid):
+                    item = grid[row_num - 1]
+                    strike = item[1]
+                    # Add CE
+                    ce_key = (target_expiry, strike, 'CE')
+                    if ce_key in self.sensex_options:
+                        ce = self.sensex_options[ce_key]
+                        self.watchlist.append({'strike': strike, 'type': 'CE', 'token': ce['token'], 'symbol': ce['dispName'], 'expiry': target_expiry})
+                    # Add PE
+                    pe_key = (target_expiry, strike, 'PE')
+                    if pe_key in self.sensex_options:
+                        pe = self.sensex_options[pe_key]
+                        self.watchlist.append({'strike': strike, 'type': 'PE', 'token': pe['token'], 'symbol': pe['dispName'], 'expiry': target_expiry})
+            self._save_watchlist()
+            logging.info(f"Added {len(selected_rows)*2} items (CE/PE) to watchlist")
 
         # Selection and rest (copy from earlier)
 

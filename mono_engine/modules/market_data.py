@@ -80,15 +80,6 @@ class MarketData(BaseModule):
             if symbol in self.selected_symbols:
                 self._display_watchlist_tick_table()
 
-    def get_scrip_details(self, symbol):
-        """Fetch token/lot for symbol from Tradejini API/cache."""
-        try:
-            resp = self.engine.session.rest.get("/api/master/symbols")  # Adapt to Tradejini endpoint for symbol master
-            # Parse for symbol (mock for test)
-            return {'token': '12345', 'lot_size': 50}  # Real: parse resp for symbol
-        except:
-            return {'token': 'mock_token', 'lot_size': 50}
-
     def _display_watchlist_tick_table(self):
         extended_table = []
         for item in self.watchlist + [{'strike': None, 'type': 'SPOT', 'token': self.sensex_spot_token, 'symbol': 'SENSEX_SPOT'}]:  # Include spot
@@ -161,177 +152,121 @@ class MarketData(BaseModule):
                     logging.info(f"SENSEX Spot Token (from Tradejini Index master): {self.sensex_spot_token}")
                     break
 
-        if not self.sensex_spot_token:
-            logging.error("SENSEX spot token not found — check symbols_Index.csv manually")
-            return
+        # Subscribe to SENSEX spot for open price
+        self.streamer.subscribe_l1([f"{self.sensex_spot_token}_BSE"])
+        self.streamer.snapshot([f"{self.sensex_spot_token}_BSE"])
 
-        # Subscribe to spot for open capture
-        spot_symbol = f"{self.sensex_spot_token}_BSE"  # Adapt to project symbol format
-        self.streamer.subscribe_l1([spot_symbol])
-
-        # NEW: Check if it's potentially market hours (IST, Mon-Fri, ~9AM-4PM) to decide if waiting makes sense
-        now_ist = datetime.now(timezone('Asia/Kolkata'))
-        is_weekday = now_ist.weekday() < 5  # 0-4 = Mon-Fri
-        is_market_time = now_ist.hour >= 9 and now_ist.hour < 16  # Rough window
-        wait_duration = 60 if is_weekday and is_market_time else 10  # Shorter wait on off-days
-
-        # Day Open: Try streamer first, then cache, then fallback
-        logging.info(f"Waiting up to {wait_duration}s for SENSEX spot open from streamer...")
+        # Wait for spot open from streamer (or fallback to cache)
+        logging.info("Waiting up to 10s for SENSEX spot open from streamer...")
         start_time = time.time()
-        while self.spot_open is None and time.time() - start_time < wait_duration:
-            # NEW: Actively check quotes for 'open' field during wait
-            if spot_symbol in self.quotes and 'open' in self.quotes[spot_symbol] and self.quotes[spot_symbol]['open'] > 0:
-                self.spot_open = self.quotes[spot_symbol]['open']
-                with open(cache_file, 'w') as f:
-                    f.write(str(self.spot_open))
-                logging.info(f"Captured SENSEX open from streamer quotes: {self.spot_open}")
+        while self.spot_open is None and time.time() - start_time < 10:
             time.sleep(1)
+        if self.spot_open is None and os.path.exists(cache_file):
+            with open(cache_file, 'r') as f:
+                self.spot_open = float(f.read().strip())
+            logging.info(f"Used cached SENSEX open: {self.spot_open}")
+        elif self.spot_open is None:
+            self.spot_open = 84200.0  # Manual fallback if no data (adjust)
+            logging.warning(f"No spot open data. Using fallback: {self.spot_open}")
 
-        if self.spot_open is None:
-            if os.path.exists(cache_file):
-                with open(cache_file, 'r') as f:
-                    self.spot_open = float(f.read().strip())
-                logging.info(f"Loaded last trading day's open from cache: {self.spot_open}")
-            else:
-                self.spot_open = 83540.43  # Script fallback
-                logging.info(f"No cache/streamer data — using fallback {self.spot_open}")
+        # Compute rounded base and grid strikes
+        rounded_base = round(self.spot_open / 100) * 100
+        logging.info(f"Day Open: {self.spot_open} → Rounded Base: {rounded_base}")
 
-        # Grid settings (exact as script)
-        strike_interval = 100
-        num_offsets = 10
+        target_strikes = [rounded_base + offset for offset in range(-1000, 1100, 100)]  # ±10 strikes
 
-        base_strike = round(self.spot_open / strike_interval) * strike_interval
-        ce_strikes = [base_strike + (i * strike_interval) for i in range(1, num_offsets + 1)]
-        pe_strikes = [base_strike - (i * strike_interval) for i in range(1, num_offsets + 1)]
-        target_strikes = sorted(pe_strikes + ce_strikes)
+        logging.info(f"CE (+10): {target_strikes[10:]}")
+        logging.info(f"PE (-10): {target_strikes[:10][::-1]}")  # Reverse for descending
 
-        logging.info(f"\nDay Open: {self.spot_open} → Rounded Base: {base_strike}")
-        logging.info(f"CE (+{num_offsets}): {ce_strikes}")
-        logging.info(f"PE (-{num_offsets}): {pe_strikes}\n")
-
-        # Fetch BSEOptions if missing
+        # Fetch BSEOptions group if missing
         if not os.path.exists(options_file):
-            logging.info("Fetching BSEOptions from Tradejini...")
+            logging.info("Fetching BSEOptions group from Tradejini...")
             raw_options = symbol_api.get_symbol_details("BSEOptions")
             with open(options_file, 'w', encoding='utf-8') as f:
                 f.write(raw_options)
             logging.info(f"Saved {options_file}")
 
-        # Load SENSEX options from CSV (exact as script) + build symbol map
-        sensex_options = {}
-        symbol_map = {}  # For full symbols
+        # Parse BSEOptions CSV for tokens/symbols
+        sensex_options = {}  # (expiry, strike, type): token
+        symbol_map = {}  # token: symbol
         with open(options_file, newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if 'SENSEX' in row['id']:
-                    parts = row['id'].split('_')
-                    if len(parts) >= 6:
-                        expiry = parts[3]
-                        strike = int(parts[4])
-                        opt_type = parts[5]
-                        token = row['excToken']
-                        sensex_options[(expiry, strike, opt_type)] = token
-                        symbol_map[token] = row['id']  # Full symbol like SENSEX_2026-02-12_83000_CE
+                if 'SENSEX' in row.get('dispName', '') or 'SENSEX' in row.get('id', ''):
+                    token = row['excToken']
+                    symbol = row.get('id', '') or row.get('dispName', '')  # Full symbol
+                    strike = row.get('strike', None)
+                    opt_type = row.get('optType', None)
+                    expiry_str = row.get('expiry', None)
+                    if expiry_str and strike and opt_type:
+                        expiry = datetime.strptime(expiry_str, '%d%b%y').date()  # DDMMMYY to date
+                        sensex_options[(expiry, int(strike), opt_type) ] = token
+                    symbol_map[token] = symbol
+                    self.token_to_scrip[token] = f"{strike}{opt_type}" if strike else 'SENSEX'  # User-friendly
 
-        # MOD: Compute nearest weekly expiry early (before load watchlist)
-        today = datetime.now()
-        expiries = sorted(set(k[0] for k in sensex_options.keys()))
-        weekly_expiries = []
-        for exp_str in expiries:
-            try:
-                exp_date = datetime.strptime(exp_str, '%Y-%m-%d')
-                if exp_date.weekday() in [3, 2]:  # Thursday=3, Wednesday=2
-                    weekly_expiries.append((exp_date, exp_str))
-            except:
-                pass
+        # Compute target expiry (weekly, Thursday)
+        today = datetime.now(timezone('Asia/Kolkata')).date()  # IST
+        days_to_thursday = (3 - today.weekday() + 7) % 7  # Wednesday is 2, Thursday 3
+        target_expiry = today + timedelta(days=days_to_thursday or 7)  # Next Thursday if today Thursday
 
-        if weekly_expiries:
-            nearest_weekly = min([e for e in weekly_expiries if e[0] >= today], key=lambda x: x[0], default=weekly_expiries[0])
-            target_expiry = nearest_weekly[1]
-            logging.info(f"Selected Weekly Expiry (from Tradejini data): {target_expiry} ({nearest_weekly[0].strftime('%d %b %Y %A')})\n")
-        else:
-            target_expiry = expiries[-1] if expiries else None
-            logging.info(f"Fallback Expiry: {target_expiry}\n")
+        logging.info(f"Selected Weekly Expiry (from Tradejini data): {target_expiry} ({target_expiry.strftime('%d %b %Y')} Thursday)")
 
-        if not target_expiry:
-            logging.error("No expiries found — manual input required")
-            return
-
-        # MOD: Now load watchlist and check/reset for new week/expiry
+        # Load watchlist and existing
         self._load_watchlist()
-        if self.watchlist:
-            # Check if expiry matches (handle old JSON without 'expiry')
-            saved_expiry = self.watchlist[0].get('expiry')
-            if saved_expiry != target_expiry:
-                logging.info(f"Cleared old watchlist (expiry {saved_expiry}) for new week/expiry {target_expiry}")
-                self.watchlist = []
-                # Optional: Delete file to clean slate
-                if os.path.exists(watchlist_file):
-                    os.remove(watchlist_file)
+        existing_symbols = [item['symbol'] for item in self.watchlist]
+        existing_tokens = [item['token'] for item in self.watchlist]
 
-        # Build table data with row numbers (for selection)
-        table_data = []
-        row_map = {}  # Row num to (strike, type, token)
+        # Condition 1: Prompt to add from grid (only new)
+        grid_table = []
         row_num = 1
-        for strike in target_strikes:
-            for opt_type in ['PE', 'CE']:  # List PE then CE per strike for finer selection
+        for offset in range(-1000, 1100, 100):
+            strike = rounded_base + offset
+            for opt_type in ['PE', 'CE']:
                 token = sensex_options.get((target_expiry, strike, opt_type))
-                if token:
-                    offset = strike - base_strike
-                    offset_str = f"+{offset}" if offset > 0 else str(offset)
-                    table_data.append([row_num, strike, opt_type, token, offset_str])
-                    row_map[row_num] = (strike, opt_type, token)
+                symbol = symbol_map.get(token, f"OPTIDX_SENSEX_BFO_{target_expiry.strftime('%Y-%m-%d')}_{strike}_{opt_type}")
+                if token and symbol not in existing_symbols:
+                    grid_table.append([row_num, strike, opt_type, token, offset])
                     row_num += 1
 
-        # Display table (now with row #, type separate)
-        headers = ["#", "Strike", "Type", "Token", "Offset"]
-        print(tabulate(table_data, headers=headers, tablefmt="grid"))  # Console for user
-        logging.info(tabulate(table_data, headers=headers, tablefmt="plain"))  # Log plain
-
-        total_options = len(table_data)
-        logging.info(f"\nTotal Options: {total_options} (PE/CE for grid) + spot")
-
-        # Condition 1: User choice for watchlist
-        user_input = input("\nEnter row numbers to add to watchlist (comma-separated/ranges, e.g., '1,3-5,7', or 'all' for everything): ").strip().lower()
-        selected_rows = set()
-        if user_input == 'all':
-            selected_rows = set(range(1, row_num))
+        if not grid_table:
+            logging.info("No new grid options available — all already in watchlist or no data")
         else:
-            parts = user_input.split(',')
-            for part in parts:
-                if '-' in part:
-                    start, end = map(int, part.split('-'))
-                    selected_rows.update(range(start, end + 1))
-                elif part.isdigit():
-                    selected_rows.add(int(part))
+            print("\nAvailable Grid Options (new only):")
+            print(tabulate(grid_table, headers=["#", "Strike", "Type", "Token", "Offset"], tablefmt="grid"))
+            logging.info(tabulate(grid_table, headers=["#", "Strike", "Type", "Token", "Offset"], tablefmt="plain"))
 
-        # Build initial watchlist and tokens from condition 1
-        selected_tokens = [self.sensex_spot_token]  # Always include spot
-        symbol_to_token = {}
-        existing_symbols = {item['symbol'] for item in self.watchlist}  # For dedupe
-        for r in selected_rows:
-            if r in row_map:
-                strike, opt_type, token = row_map[r]
-                symbol = symbol_map.get(token, f"SENSEX_{target_expiry}_{strike}_{opt_type}")
-                if symbol not in existing_symbols:
-                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol, 'expiry': target_expiry})  # MOD: Add expiry
-                    existing_symbols.add(symbol)
-                selected_tokens.append(token)
-                symbol_to_token[symbol] = token
-                # NEW: Populate token_to_scrip
-                self.token_to_scrip[token] = f"{strike}{opt_type}"
+            user_input = input("\nEnter row numbers to add to watchlist (comma-separated/ranges, e.g., '1,3-5,7', or 'all' for everything): ").strip().lower()
+            if user_input == 'all':
+                add_rows = range(1, len(grid_table) + 1)
+            elif user_input:
+                add_rows = []
+                for part in user_input.split(','):
+                    if '-' in part:
+                        start, end = map(int, part.split('-'))
+                        add_rows.extend(range(start, end + 1))
+                    else:
+                        add_rows.append(int(part))
+            else:
+                add_rows = []
 
-        # For spot
-        self.token_to_scrip[self.sensex_spot_token] = "SENSEX"
+            selected_tokens = existing_tokens.copy()
+            for r in add_rows:
+                if 1 <= r <= len(grid_table):
+                    strike, opt_type, token, offset = grid_table[r-1][1:]
+                    symbol = symbol_map.get(token, f"OPTIDX_SENSEX_BFO_{target_expiry.strftime('%Y-%m-%d')}_{strike}_{opt_type}")
+                    self.watchlist.append({'strike': strike, 'type': opt_type, 'token': token, 'symbol': symbol})
+                    selected_tokens.append(token)
+                    self.token_to_scrip[token] = f"{strike}{opt_type}"
 
-        # Dedupe tokens
-        selected_tokens = list(set(selected_tokens))
+            if add_rows:
+                print("\nAdded/Updated symbols to watchlist:")
+                watchlist_table = [[item['strike'], item['type'], item['token'], item['symbol']] for item in self.watchlist]
+                print(tabulate(watchlist_table, headers=["Strike", "Type", "Token", "Symbol"], tablefmt="grid"))
+                logging.info(tabulate(watchlist_table, headers=["Strike", "Type", "Token", "Symbol"], tablefmt="plain"))
+                self._save_watchlist()
 
-        logging.info(f"\nAdded/Updated {len(self.watchlist)} symbols to watchlist:")
-        watchlist_table = [[item['strike'], item['type'], item['token'], item['symbol']] for item in self.watchlist]
-        print(tabulate(watchlist_table, headers=["Strike", "Type", "Token", "Symbol"], tablefmt="grid"))  # Show to user
-        logging.info(tabulate(watchlist_table, headers=["Strike", "Type", "Token", "Symbol"], tablefmt="plain"))
-        self._save_watchlist()  # Save after condition 1
+            self.streamer.subscribe_l1([f"{t}_BFO" for t in selected_tokens] + [f"{self.sensex_spot_token}_BSE"])
+            self.streamer.snapshot(selected_tokens + [self.sensex_spot_token])
 
         # Condition 2: Propose top scrips with high upside potential
         # First, subscribe to ALL grid options temporarily for data (volume, greeks)
@@ -423,11 +358,13 @@ class MarketData(BaseModule):
         # Final subscriptions (only selected + spot)
         self.selected_symbols = [f"{t}_BFO" if t != self.sensex_spot_token else f"{t}_BSE" for t in selected_tokens]
         self.streamer.subscribe_l1(self.selected_symbols)
-        self.streamer.subscribe_l2(self.selected_symbols)  # Add subscribe_l2 for depth data
+        #self.streamer.subscribe_l2(self.selected_symbols)  # Add subscribe_l2 for depth data
         option_tokens = [t for t in selected_tokens if t != self.sensex_spot_token]
         if option_tokens:
             self.streamer.subscribe_greeks(option_tokens)
         logging.info(f"Monitoring {len(self.selected_symbols)} symbols with greeks")
+
+        
 
         # Additional script notes in logs
         logging.info("\nFully Broker-Auto (Tradejini):")
