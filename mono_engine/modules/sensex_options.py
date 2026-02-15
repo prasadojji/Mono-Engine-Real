@@ -156,22 +156,48 @@ class SensexOptions:
         selection = input("\nEnter row numbers to add to watchlist (comma-separated/ranges, e.g., '1,3-5,7', or 'all' for everything): ").strip().lower()
         if selection:
             selected_rows = self._parse_selection(selection, grid)
+            existing_tokens = {item['token'] for item in self.watchlist}  # Track existing tokens
+            added_count = 0
+
             for row_num in selected_rows:
                 if 1 <= row_num <= len(grid):
                     item = grid[row_num - 1]
                     strike = item[1]
-                    # Add CE
+
+                    # Add CE if not duplicate
                     ce_key = (target_expiry, strike, 'CE')
                     if ce_key in self.sensex_options:
                         ce = self.sensex_options[ce_key]
-                        self.watchlist.append({'strike': strike, 'type': 'CE', 'token': ce['token'], 'symbol': ce['dispName'], 'expiry': target_expiry})
-                    # Add PE
+                        ce_token = ce['token']
+                        if ce_token not in existing_tokens:
+                            self.watchlist.append({
+                                'strike': strike,
+                                'type': 'CE',
+                                'token': ce_token,
+                                'symbol': ce['dispName'],
+                                'expiry': target_expiry
+                            })
+                            existing_tokens.add(ce_token)
+                            added_count += 1
+
+                    # Add PE if not duplicate
                     pe_key = (target_expiry, strike, 'PE')
                     if pe_key in self.sensex_options:
                         pe = self.sensex_options[pe_key]
-                        self.watchlist.append({'strike': strike, 'type': 'PE', 'token': pe['token'], 'symbol': pe['dispName'], 'expiry': target_expiry})
+                        pe_token = pe['token']
+                        if pe_token not in existing_tokens:
+                            self.watchlist.append({
+                                'strike': strike,
+                                'type': 'PE',
+                                'token': pe_token,
+                                'symbol': pe['dispName'],
+                                'expiry': target_expiry
+                            })
+                            existing_tokens.add(pe_token)
+                            added_count += 1
+
             self._save_watchlist()
-            logging.info(f"Added {len(selected_rows)*2} items (CE/PE) to watchlist")
+            logging.info(f"Added {added_count} unique items (CE/PE) to watchlist (duplicates skipped)")
 
         # Selection and rest (copy from earlier)
 

@@ -41,7 +41,8 @@ class TradeState:
         self.in_trade = False
         self.entry_details = None  # EntryDetails or None
         self._lock = Lock()  # For thread-safe access/updates
-
+        self.trade_history = []  # NEW: List of completed trades
+        
     def update(self, in_trade: bool, entry_details=None):
         """Update the state atomically."""
         with self._lock:
@@ -120,17 +121,13 @@ class StateModule(BaseModule):
             # Optionally flag state as unreliable until next sync
 
     def _on_order_filled(self, data):
-        """
-        Handle order_filled event (from streamer/order.py).
-        Updates state based on fill details.
-        Data expected: {'order_type': 'buy'/'sell', 'scrip': str, 'price': float, 'quantity': int, 'fill_time': datetime}
-        Handles partial fills by accumulating (for simplicity, assume full fills here; extend for partials).
-        """
+        """Handle confirmed fill events from execution. Updates state based on fill details."""
         if data['scrip'] != self.scrip:
             return  # Ignore unrelated scrips
         
         try:
-            if data['order_type'] == 'buy':
+            order_type = data['order_type']
+            if order_type == 'buy':
                 if not self.state.get_state()['in_trade']:  # Avoid duplicates
                     entry_details = EntryDetails(
                         price=data['price'],
@@ -143,10 +140,22 @@ class StateModule(BaseModule):
                 else:
                     self.logger.warning("Buy filled but already in_trade. Ignored to prevent duplicates.")
             
-            elif data['order_type'] == 'sell':
+            elif order_type == 'sell':  # Proper elif (no else before it)
                 if self.state.get_state()['in_trade']:
+                    entry = self.state.entry_details
+                    exit_time = data.get('fill_time', datetime.now())
+                    exit_price = data['price']
+
+                    trade = {
+                        "entry_time": entry.time,
+                        "entry_price": entry.price,
+                        "exit_time": exit_time,
+                        "exit_price": exit_price
+                    }
+                    self.state.trade_history.append(trade)  # Record completed trade
+
                     self.state.update(in_trade=False)
-                    self.logger.info(f"Sell filled: Set in_trade=False for {self.scrip}.")
+                    self.logger.info(f"Sell filled: Set in_trade=False for {self.scrip}. Trade recorded.")
                 else:
                     self.logger.warning("Sell filled but not in_trade. Possible sync issue.")
             
