@@ -64,6 +64,8 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
     def start(self):
         """Start the module: Register event subscriptions and init DB."""
         super().start()  # Call Order's start for signal subscriptions
+        self.events.subscribe('buy_signal', self._handle_buy_signal)
+        self.events.subscribe('sell_signal', self._handle_sell_signal)
         self._init_db()  # Phase 4: Create/connect to DB
         self.logger.info("PaperTrading started in simulation mode.")
 
@@ -85,7 +87,8 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
         publish events, update state/portfolio via events, store in DB.
         """
         # Get real current price from MarketData quotes (fallback to 0 if unavailable)
-        real_price = self._get_real_price(symbol)
+        #real_price = self._get_real_price(symbol)
+        real_price = self._get_real_price(data)  # Pass full data dict
         
         # Generate dummy order ID
         order_id = f"{DUMMY_ID_PREFIX}{int(time.time())}"
@@ -116,16 +119,14 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
         
         return {'s': 'ok', 'd': {'order_id': order_id}}  # Mimic real API response
 
-    def _get_real_price(self, symbol: str) -> float:
-        """Pull real LTP from MarketData quotes (real-time from ticks)."""
-        if self.market_data and symbol in self.market_data.quotes:
-            quote = self.market_data.quotes[symbol]
-            ltp = quote.get('ltp', 0.0)
-            logging.info(f"Real quote for {symbol}: LTP {ltp}")
+    def _get_real_price(self, subscribed_symbol: str, fallback_price: float = 0.0) -> float:
+        if subscribed_symbol and self.market_data and subscribed_symbol in self.market_data.quotes:
+            quote = self.market_data.quotes[subscribed_symbol]
+            ltp = quote.get('ltp', fallback_price)
+            self.logger.info(f"Real LTP for {subscribed_symbol}: {ltp}")
             return ltp
-        else:
-            logging.warning(f"No real quote for {symbol}; using dummy price.")
-            return 0.0  # Fallback (improve with tick subscription if needed)
+        self.logger.warning(f"No real quote for {subscribed_symbol}; using fallback {fallback_price}")
+        return fallback_price
 
     def _store_trade(self, order_id: str, symbol: str, side: str, qty: int, price: float, fill_time: datetime,
                      exit_price: Optional[float] = None, exit_time: Optional[datetime] = None, pnl: Optional[float] = None):
@@ -175,10 +176,28 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
                 return {'s': 'ok'}
         return None
 
-    # Handle signals (inherited from Order, but add sim logging)
     def _handle_buy_signal(self, data: Dict):
-        data['quantity'] = PAPER_QTY  # Override for paper
-        super()._handle_buy_signal(data)  # But will call simulated place_order
+        if self.engine.modules['state'].is_in_trade():
+            self.logger.warning("Already in_trade — ignoring buy signal")
+            return
+            
+        symbol = data.get('symbol', 'UNKNOWN')
+        subscribed_symbol = data.get('subscribed_symbol')
+        price = data.get('price', 0.0)
+        qty = data.get('quantity', PAPER_QTY)
+        
+        real_price = self._get_real_price(subscribed_symbol, price)  # Prefer real LTP
+        self._simulate_fill(symbol, 'buy', 'limit', real_price)
 
     def _handle_sell_signal(self, data: Dict):
-        super()._handle_sell_signal(data)
+        if not self.engine.modules['state'].is_in_trade():
+            self.logger.warning("Not in_trade — ignoring sell signal")
+            return
+            
+        symbol = data.get('symbol', 'UNKNOWN')
+        subscribed_symbol = data.get('subscribed_symbol')
+        price = data.get('price', 0.0)
+        qty = data.get('quantity', PAPER_QTY)
+        
+        real_price = self._get_real_price(subscribed_symbol, price)
+        self._simulate_fill(symbol, 'sell', 'limit', real_price)

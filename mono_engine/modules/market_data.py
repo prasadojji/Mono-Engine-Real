@@ -49,6 +49,14 @@ class MarketData(BaseModule):
             json.dump(self.watchlist, f, indent=4)
         logging.info(f"Saved watchlist to {watchlist_file}")
 
+        # Subscribe options immediately for real ticks/quotes
+        option_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
+        if option_symbols:
+            self.streamer.subscribe_l1(option_symbols)
+            if hasattr(self.streamer, 'subscribeL1SnapShot'):
+                self.streamer.subscribeL1SnapShot(option_symbols)
+            logging.info(f"Subscribed L1 + snapshot for options: {option_symbols}")
+            
     def start(self):
         logging.info("MarketData starting — SENSEX options workflow (as in sensex_day_open_strikes.py)")
         self.events.subscribe(EVENT_TICK, self._on_tick)

@@ -1,6 +1,10 @@
 import logging
 from mono_engine.engine import MonoEngine
 import time
+import pandas as pd
+import warnings
+warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
+
 
 # --- Add our imports here ---
 # These are for the SENSEX logic (datetime for expiry, csv/io for parsing symbols, os for file checks)
@@ -16,6 +20,8 @@ from openapi_client.api import SymbolDetailsApi
 # Import our new module (the sensex_options.py you created)
 from mono_engine.modules.sensex_options import SensexOptions
 from mono_engine.modules.order import Order  # For your test order (optional now, since conditional)
+from mono_engine.modules.charting_engine import ChartingEngine
+
 
 # ======================
 # Updated Code for Mode Prompt and Integration
