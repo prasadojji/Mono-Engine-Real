@@ -59,21 +59,25 @@ class Streamer:
 
     def subscribe_l1(self, symbols):
         if self.nx_stream and self.connected:
-            self.nx_stream.subscribeL1(symbols)
-            self.nx_stream.subscribeL1SnapShot(symbols)
-            logging.info(f"Subscribed L1 + snapshot for: {symbols}")
+            try:
+                self.nx_stream.subscribeL1(symbols)
+                self.nx_stream.subscribeL1SnapShot(symbols)  # Capital S as per docs
+                logging.info(f"Subscribed L1 + Snapshot for: {symbols}")
+            except AttributeError as e:
+                logging.error(f"Snapshot subscription failed: {e} - Falling back to L1 only")
+                self.nx_stream.subscribeL1(symbols)
 
     def subscribe_greeks(self, tokens):
         if self.nx_stream and self.connected:
             self.nx_stream.subscribeGreeks(tokens)
             self.nx_stream.subscribeGreeksSnapShot(tokens)
-            logging.info(f"Subscribed greeks + snapshot for tokens: {tokens}")
+            logging.info(f"Subscribed greeks + Snapshot for tokens: {tokens}")
 
     def subscribe_l5(self, symbols):
         if self.nx_stream and self.connected:
             self.nx_stream.subscribeL5(symbols)  # L5 for depth
             self.nx_stream.subscribeL5SnapShot(symbols)  # Snapshot
-            logging.info(f"Subscribed L5 + snapshot for: {symbols}")
+            logging.info(f"Subscribed L5 + Snapshot for: {symbols}")
 
     def subscribe_l2(self, symbols):
         self.subscribe_l5(symbols)  # Alias l2 to l5

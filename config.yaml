@@ -13,6 +13,7 @@ enabled_modules:
   - portfolio # Existing (for sync in state.py)
   - state     # Module 7 (state engine)
   - market_data  # Uncomment if needed for scrip selection
+  - strategy
   # - risk         # For future
 
 # New params for modules 7/8 (options trading focus)

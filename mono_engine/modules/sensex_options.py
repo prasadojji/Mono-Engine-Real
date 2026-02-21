@@ -62,14 +62,15 @@ class SensexOptions:
                             'dispName': row['dispName'],
                             'token': row['excToken'],
                             'lot': row['lot'],
-                            'weekly': row['weekly']
+                            'weekly': row['weekly'],
+                            'id': row['id']
                         }
 
     def _load_watchlist(self):
         if os.path.exists(self.watchlist_file):
             with open(self.watchlist_file, 'r') as f:
                 self.watchlist = json.load(f)
-            logging.info(f"Loaded {len(self.watchlist)} items from watchlist.json")
+            logging.debug(f"Loaded {len(self.watchlist)} items from watchlist.json")
         else:
             self.watchlist = []
 
@@ -103,7 +104,7 @@ class SensexOptions:
         self.engine.streamer.subscribe_l1([spot_symbol])
         if hasattr(self.engine.streamer, 'subscribeL1SnapShot'):
             self.engine.streamer.subscribeL1SnapShot([spot_symbol])
-        logging.info(f"Subscribed L1 + snapshot for spot: {spot_symbol}")
+        logging.info(f"Subscribed L1 + Snapshot for spot: {spot_symbol}")
 
         # Get day_open (from cache or tick)
         if os.path.exists(self.cache_file):
@@ -175,7 +176,8 @@ class SensexOptions:
                                 'type': 'CE',
                                 'token': ce_token,
                                 'symbol': ce['dispName'],
-                                'expiry': target_expiry
+                                'expiry': target_expiry,
+                                'id': ce['id']
                             })
                             existing_tokens.add(ce_token)
                             added_count += 1
@@ -191,13 +193,50 @@ class SensexOptions:
                                 'type': 'PE',
                                 'token': pe_token,
                                 'symbol': pe['dispName'],
-                                'expiry': target_expiry
+                                'expiry': target_expiry,
+                                'id': pe['id']
                             })
                             existing_tokens.add(pe_token)
                             added_count += 1
 
             self._save_watchlist()
             logging.info(f"Added {added_count} unique items (CE/PE) to watchlist (duplicates skipped)")
+
+            if added_count > 0 or selection:  # only if something was selected
+                print("\nWaiting 5–10 seconds for initial LTP data...")
+                time.sleep(8)  # give time for first ticks to arrive
+
+                updated_grid = []
+                for item in self.watchlist:
+                    ce_token = item['token'] if item['type'] == 'CE' else None
+                    pe_token = item['token'] if item['type'] == 'PE' else None
+                    
+                    ce_ltp = 'N/A'
+                    pe_ltp = 'N/A'
+                    
+                    if ce_token:
+                        ce_quote = self.engine.modules['market_data'].quotes.get(f"{ce_token}_BFO", {})
+                        ce_ltp = ce_quote.get('ltp', 'N/A')
+                    
+                    if pe_token:
+                        pe_quote = self.engine.modules['market_data'].quotes.get(f"{pe_token}_BFO", {})
+                        pe_ltp = pe_quote.get('ltp', 'N/A')
+
+                    updated_grid.append([
+                        item['strike'],
+                        item['type'],
+                        item.get('symbol', 'N/A'),
+                        ce_ltp if item['type'] == 'CE' else '—',
+                        pe_ltp if item['type'] == 'PE' else '—',
+                        item['strike'] - base_strike   # offset
+                    ])
+
+                print("\nSelected Strikes with Current LTP:")
+                print(tabulate(
+                    updated_grid,
+                    headers=["Strike", "Type", "Symbol", "LTP (CE)", "LTP (PE)", "Offset"],
+                    tablefmt="grid"
+                ))
 
         # Selection and rest (copy from earlier)
 

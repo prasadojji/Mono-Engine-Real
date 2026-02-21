@@ -37,41 +37,23 @@ class MarketData(BaseModule):
         # MOD: Load watchlist moved to workflow (after expiry compute)
 
         # === CLEANED: Multi-timeframe candle aggregation for SENSEX spot only ===
-                # === PER-SYMBOL candle aggregation ===
-        self.timeframes = ["1min", "5min"]  # Add more later
-        self.candles = defaultdict(dict)          # symbol -> tf -> pd.DataFrame
-        self.current_candle = defaultdict(dict)   # symbol -> tf -> current dict or None
-        self.load_historical_candles()
-                # After logging "SENSEX Spot Token..."
-        logging.info(f"SENSEX Spot Token (from Tradejini Index master): {self.sensex_spot_token}")
+        self.timeframes = ["1min", "5min"]  # Add more later if needed
+        self.candles = {}      # tf -> pd.DataFrame (completed candles)
+        self.current_candle = {}  # tf -> current incomplete candle dict
 
-        self.load_historical_candles()  # ADD HERE (after token set)
+        for tf in self.timeframes:
+            self.candles[tf] = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+            self.candles[tf].index.name = "timestamp"
+            self.current_candle[tf] = None  # Start as None — initialized on first tick for this tf
+
 
     def _load_watchlist(self):
         if os.path.exists(watchlist_file):
             with open(watchlist_file, 'r') as f:
-                loaded = json.load(f)
-            # Deduplicate by token
-            seen = set()
-            self.watchlist = []
-            for item in loaded:
-                if item['token'] not in seen:
-                    seen.add(item['token'])
-                    self.watchlist.append(item)
-            logging.info(f"Loaded {len(self.watchlist)} UNIQUE items from watchlist.json")
-
-            # Set selected_symbols for tick table display (options + spot once)
-            self.selected_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
-            if self.sensex_spot_token:
-                spot_sym = f"{self.sensex_spot_token}_BSE"
-                self.selected_symbols.append(spot_sym)  # Add spot only once
-
-            # ALWAYS subscribe existing watchlist (options + spot handled inside method)
-            self._subscribe_watchlist_options()
+                self.watchlist = json.load(f)
+            logging.info(f"Loaded {len(self.watchlist)} items from watchlist.json")
         else:
             self.watchlist = []
-            self.selected_symbols = []  # Clear if no file
-            logging.info("No watchlist.json found — starting empty")
 
     def _save_watchlist(self):
         with open(watchlist_file, 'w') as f:
@@ -82,15 +64,20 @@ class MarketData(BaseModule):
         option_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
         if option_symbols:
             self.streamer.subscribe_l1(option_symbols)
-            #if hasattr(self.streamer, 'subscribeL1SnapShot'):
-            #    self.streamer.subscribeL1SnapShot(option_symbols)
+            if hasattr(self.streamer, 'subscribeL1SnapShot'):
+                self.streamer.subscribeL1SnapShot(option_symbols)
             logging.info(f"IMMEDIATE subscription L1 + Snapshot for options: {option_symbols}")
-       
+
     def start(self):
         logging.info("MarketData starting — SENSEX options workflow (as in sensex_day_open_strikes.py)")
         self.events.subscribe(EVENT_TICK, self._on_tick)
         self.events.subscribe(EVENT_CONNECT, self._on_connect)
-        self._load_watchlist()  # Ensures subscription immediately
+
+        self._sensex_options_workflow()
+    def start(self):
+        logging.info("MarketData starting — SENSEX options workflow (as in sensex_day_open_strikes.py)")
+        self.events.subscribe(EVENT_TICK, self._on_tick)
+        self.events.subscribe(EVENT_CONNECT, self._on_connect)
         self._sensex_options_workflow()
 
         # === NEW: Load historical candles after workflow (spot_token now set) ===
@@ -110,49 +97,37 @@ class MarketData(BaseModule):
 
     def _on_tick(self, tick):
         symbol = tick.get('symbol')
-        if not symbol:
-            return
+        if symbol:
+            self.quotes[symbol].update(tick)
+            # Capture spot open as soon as a valid tick arrives (safeguard if loop misses it)
+            spot_symbol = f"{self.sensex_spot_token}_BSE"
+            if symbol == spot_symbol and self.spot_open is None and 'open' in tick and tick['open'] > 0:
+                self.spot_open = tick['open']
+                with open(cache_file, 'w') as f:
+                    f.write(str(self.spot_open))
+                logging.info(f"Captured SENSEX open from tick: {self.spot_open}")
+            # NEW: If symbol is in selected_symbols (watchlist), display updated table
+            if symbol in self.selected_symbols:
+                self._display_watchlist_tick_table()
 
-        self.quotes[symbol].update(tick)
+            # === FIXED: Aggregate candles for SENSEX spot only (per-timeframe) ===
+            if symbol == spot_symbol:
+                for tf in self.timeframes:
+                    self._aggregate_candle(tick, tf)  # No symbol param
 
-        # Capture spot open (your existing logic — unchanged)
-        spot_symbol = f"{self.sensex_spot_token}_BSE" if self.sensex_spot_token else None
-        if symbol == spot_symbol and self.spot_open is None and 'open' in tick and tick['open'] > 0:
-            self.spot_open = tick['open']
-            with open(cache_file, 'w') as f:
-                f.write(str(self.spot_open))
-            logging.info(f"Captured SENSEX open from tick: {self.spot_open}")
-
-        # Display table for watchlist options (your existing logic — adjust if selected_symbols differs)
-        if symbol in self.selected_symbols:
-            self._display_watchlist_tick_table()
-
-        # === NEW: Aggregate candles for ANY symbol (spot or options) ===
-        for tf in self.timeframes:
-            self._aggregate_candle(symbol, tick, tf)
-
-    def _aggregate_candle(self, symbol: str, tick: dict, tf: str):
-        # Lazy initialization per symbol/tf
-        if symbol not in self.candles:
-            self.candles[symbol] = {}
-            self.current_candle[symbol] = {}
-        if tf not in self.candles[symbol]:
-            df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
-            df.index.name = "timestamp"
-            self.candles[symbol][tf] = df
-            self.current_candle[symbol][tf] = None
-
-        # Timestamp handling (your existing logic — unchanged)
+    def _aggregate_candle(self, tick, tf: str):
+        # Use LTT if available, else now
         ltt = tick.get("ltt")
         if ltt is not None:
             try:
-                ltt_int = int(ltt)
+                ltt_int = int(ltt)  # Convert string timestamp to int
                 ts = datetime.fromtimestamp(ltt_int)
             except (ValueError, TypeError):
-                ts = datetime.now()
+                ts = datetime.now()  # Fallback
         else:
             ts = datetime.now()
         ts = ts.replace(second=0, microsecond=0)
+
         minutes = int(tf.rstrip("min"))
         if minutes > 1:
             ts = ts.replace(minute=(ts.minute // minutes) * minutes)
@@ -161,13 +136,12 @@ class MarketData(BaseModule):
         volume = int(tick.get("vol") or tick.get("volume") or 0)
 
         if price == 0:
-            logging.warning(f"Price fallback to 0 in {tf} candle for {symbol} — check tick fields")
+            logging.warning(f"Price fallback to 0 in {tf} candle — check tick fields")
 
-        current = self.current_candle[symbol][tf]
-        if current is None or current["ts"] != ts:
-            # Close previous candle
-            if current is not None:
-                prev = current
+        if self.current_candle[tf] is None or self.current_candle[tf]["ts"] != ts:
+            # Close previous
+            if self.current_candle[tf] is not None:
+                prev = self.current_candle[tf]
                 new_row = pd.DataFrame([{
                     "open": prev["open"],
                     "high": prev["high"],
@@ -175,14 +149,10 @@ class MarketData(BaseModule):
                     "close": prev["close"],
                     "volume": prev["volume"]
                 }], index=[prev["ts"]])
-                # Avoid pandas concat warning on empty
-                if self.candles[symbol][tf].empty:
-                    self.candles[symbol][tf] = new_row
-                else:
-                    self.candles[symbol][tf] = pd.concat([self.candles[symbol][tf], new_row])
+                self.candles[tf] = pd.concat([self.candles[tf], new_row], ignore_index=False)
 
-            # Start new candle
-            self.current_candle[symbol][tf] = {
+            # Start new
+            self.current_candle[tf] = {
                 "ts": ts,
                 "open": price if price > 0 else 0.01,
                 "high": price if price > 0 else 0.01,
@@ -191,34 +161,30 @@ class MarketData(BaseModule):
                 "volume": volume
             }
         else:
-            # Update current
-            curr = current
+            curr = self.current_candle[tf]
             if price > 0:
                 curr["high"] = max(curr["high"], price)
                 curr["low"] = min(curr["low"], price)
                 curr["close"] = price
-            curr["volume"] += volume  # Keep your cumulative/delta logic
+            curr["volume"] += volume
 
+    # === NEW: Public method for charting ===
     def get_candles(self, symbol: str, tf: str) -> pd.DataFrame:
         """Return full candle DataFrame for a symbol + timeframe (including current incomplete)."""
         if symbol not in self.candles or tf not in self.candles[symbol]:
             return pd.DataFrame()
 
         df = self.candles[symbol][tf].copy()
-
-        current = self.current_candle[symbol].get(tf)
-        if current:
+        if tf in self.current_candle[symbol] and self.current_candle[symbol][tf]:
+            curr = self.current_candle[symbol][tf]
             curr_row = pd.DataFrame([{
-                "open": current["open"],
-                "high": current["high"],
-                "low": current["low"],
-                "close": current["close"],
-                "volume": current["volume"]
-            }], index=[current["ts"]])
-            if df.empty:
-                df = curr_row
-            else:
-                df = pd.concat([df, curr_row])
+                "open": curr["open"],
+                "high": curr["high"],
+                "low": curr["low"],
+                "close": curr["close"],
+                "volume": curr["volume"]
+            }], index=[curr["ts"]])
+            df = pd.concat([df, curr_row], ignore_index=False)
 
         df.sort_index(inplace=True)
         return df
@@ -268,16 +234,10 @@ class MarketData(BaseModule):
             "Scrip", "Last Time", "LTP", "Change", "% Change", "OHLC",
             "Volume", "OI", "Best Bid", "Best Ask", "Depth"
         ]
-        #print("\n=== Updated Watchlist Tick Data ===")
-        #print(tabulate(extended_table, headers=headers, tablefmt="grid"))
-
-        # Option A2: move to debug level (invisible unless you set logging level to DEBUG)
-        logging.debug("\n=== Updated Watchlist Tick Data ===")
-        logging.debug(tabulate(extended_table, headers=headers, tablefmt="grid"))
+        print("\n=== Updated Watchlist Tick Data ===")
+        print(tabulate(extended_table, headers=headers, tablefmt="grid"))
 
     def _sensex_options_workflow(self):
-        selected_tokens = []  # Default empty list
-        symbol_to_token = {}  # If used later
         # Broker API setup (public for symbol master)
         config = Configuration()
         api_client = ApiClient(config)
@@ -303,8 +263,7 @@ class MarketData(BaseModule):
 
         # Subscribe to SENSEX spot for open price
         self.streamer.subscribe_l1([f"{self.sensex_spot_token}_BSE"])
-        #self.streamer.Snapshot([f"{self.sensex_spot_token}_BSE"])
-        #self.streamer.subscribe_l1([f"{self.sensex_spot_token}_BSE"])
+        self.streamer.Snapshot([f"{self.sensex_spot_token}_BSE"])
 
         # Wait for spot open from streamer (or fallback to cache)
         logging.info("Waiting up to 10s for SENSEX spot open from streamer...")
@@ -416,8 +375,7 @@ class MarketData(BaseModule):
                 self._save_watchlist()
 
             self.streamer.subscribe_l1([f"{t}_BFO" for t in selected_tokens] + [f"{self.sensex_spot_token}_BSE"])
-            #self.streamer.Snapshot(selected_tokens + [self.sensex_spot_token])
-            self.streamer.subscribe_l1(selected_tokens + [self.sensex_spot_token])
+            self.streamer.Snapshot(selected_tokens + [self.sensex_spot_token])
 
         # Condition 2: Propose top scrips with high upside potential
         # First, subscribe to ALL grid options temporarily for data (volume, greeks)
@@ -460,9 +418,6 @@ class MarketData(BaseModule):
 
         if not analysis_data:
             logging.info("No data available for proposals (market closed?) — skipping condition 2")
-            if not selected_tokens:  # <<<< ADD THIS
-                selected_tokens = [item['token'] for item in self.watchlist]
-                logging.info(f"Falling back to {len(selected_tokens)} existing watchlist tokens")
         else:
             df = pd.DataFrame(analysis_data)
             # Filter/sort for high upside: delta >0.4, iv <25, sort by volume desc (or OI if volume 0)
@@ -518,92 +473,66 @@ class MarketData(BaseModule):
             self.streamer.subscribe_greeks(option_tokens)
         logging.info(f"Monitoring {len(self.selected_symbols)} symbols with greeks")
 
-    def _subscribe_watchlist_options(self):
-        if not self.watchlist:
-            return
-        option_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
-        spot_symbol = f"{self.sensex_spot_token}_BSE" if self.sensex_spot_token else None
-        all_symbols = set(option_symbols)  # Dedup
-        if spot_symbol:
-            all_symbols.add(spot_symbol)
-        all_symbols = list(all_symbols)
-        
-        if all_symbols and hasattr(self.streamer, 'subscribe_l1'):
-            self.streamer.subscribe_l1(all_symbols)
-            # Fixed typo + fallback
-            #if hasattr(self.streamer, 'subscribeL1SnapShot'):
-            #   self.streamer.subscribeL1SnapShot(all_symbols)
-            #elif hasattr(self.streamer, 'subscribeL1Snapshot'):
-            #    self.streamer.subscribeL1Snapshot(all_symbols)
-            logging.info(f"SUBSCRIBED L1 + Snapshot for {len(all_symbols)} symbols (spot + options)")
-
     def load_historical_candles(self):
-        # Get IST timezone
-        ist = timezone('Asia/Kolkata')
-        now = datetime.now(ist)
-        
-        # Last 2 weeks: from 14 days ago to now
-        market_start = now - timedelta(days=14)  # 2 weeks back
-        market_start = market_start.replace(hour=9, minute=15, second=0, microsecond=0)  # Start from 9:15 IST
-        from_time = int(market_start.timestamp())
-        to_time = int(now.timestamp())
-        
-        logging.info(f"Backfilling historical 1min candles for last 2 weeks")
-        logging.info(f"From: {market_start} ({from_time})")
-        logging.info(f"To:   {now} ({to_time})")
-        
-        # Loop over all watchlist symbols
-        for item in self.watchlist:
-            symbol = item['symbol']  # Full descriptive ID, e.g., 'SENSEX 26FEB 82300 CE'
-            full_id = item.get('id')  # If you store full ID in watchlist dict, use it
-            if not full_id:
-                # Fallback: construct full ID from symbol (e.g., 'OPTIDX_SENSEX_BFO_2026-02-26_82300_CE')
-                # You may need to parse expiry/strike/type from symbol or lookup from CSV
-                logging.warning(f"No full_id for {symbol} — skipping historical backfill")
-                continue
-            
-            logging.info(f"Pulling historical 1min candles for {full_id}")
-            
-            params = {
-                'id': full_id,          # Use full descriptive ID
-                'interval': '1',        # 1min
-                'from': from_time,
-                'to': to_time
-            }
-            
+        if not self.sensex_spot_token:
+            logging.warning("Spot token not set — skipping historical load")
+            return
+
+        spot_token = self.sensex_spot_token
+        exchange = "BSE"
+
+        # Fetch last 30 days (adjust as needed — Tradejini limit ~1000 candles per request)
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=30)
+
+        from_str = from_date.strftime("%Y-%m-%d 00:00:00")
+        to_str = to_date.strftime("%Y-%m-%d 23:59:59")
+
+        intervals = {"1min": "1minute", "5min": "5minute"}  # Map tf to Tradejini interval
+
+        for tf, interval in intervals.items():
             try:
-                response = self.session.rest.get("/api/mkt-data/chart/interval-data", params=params)
-                logging.info(f"Historical response for {full_id}: {response.get('s')}")
-                
-                if response.get('s') == 'ok' and 'd' in response and 'bars' in response['d']:
-                    bars = response['d']['bars']
-                    logging.info(f"Loaded {len(bars)} historical 1min bars for {full_id}")
-                    
-                    if bars:
-                        data = []
-                        for bar in bars:
-                            # bar = [timestamp_ms, open, high, low, close, volume] — OI may be missing
-                            data.append({
-                                "timestamp": datetime.fromtimestamp(bar[0] / 1000),
-                                "open": bar[1],
-                                "high": bar[2],
-                                "low": bar[3],
-                                "close": bar[4],
-                                "volume": bar[5]
-                            })
-                        
-                        df = pd.DataFrame(data)
-                        df.set_index("timestamp", inplace=True)
-                        df = df.astype(float, errors='ignore')
-                        self.candles[symbol]['1min'] = df.sort_index()
-                        
-                        logging.info(f"Historical 1min backfill complete for {symbol} ({len(df)} bars)")
-                else:
-                    logging.warning(f"No historical data for {symbol}: {response.get('msg')}")
+                params = {
+                    "exchangeSeg": exchange,
+                    "symbolToken": spot_token,
+                    "from": from_str,
+                    "to": to_str,
+                    "interval": interval
+                }
+                resp = self.engine.session.rest.get("/historical-candle", params=params)
+                # Or try "/market-data/historical-candle" if above 404
+
+                data = resp.get("d", {}).get("candles", [])
+                if not data:
+                    logging.info(f"No historical data for {tf}")
+                    continue
+
+                # candles: list of [ts_str, open, high, low, close, volume, oi]
+                df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+                df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df.set_index("timestamp", inplace=True)
+                df = df.astype({"open": float, "high": float, "low": float, "close": float, "volume": int})
+
+                self.candles[tf] = df.sort_index()
+                logging.info(f"Loaded {len(df)} historical {tf} candles for SENSEX (from {from_str} to {to_str})")
             except Exception as e:
-                logging.error(f"Historical backfill failed for {symbol}: {str(e)}")
-        
-        logging.info("Historical backfill complete for all watchlist symbols")
+                logging.error(f"Historical fetch failed for {tf}: {e} — check endpoint/path")
+
+        # After load, if current_candle not started, initialize from last historical
+        for tf in self.timeframes:
+            if self.candles[tf].empty:
+                self.current_candle[tf] = None
+            else:
+                last_row = self.candles[tf].iloc[-1]
+                self.current_candle[tf] = {
+                    "ts": self.candles[tf].index[-1],
+                    "open": last_row["open"],
+                    "high": last_row["high"],
+                    "low": last_row["low"],
+                    "close": last_row["close"],
+                    "volume": last_row["volume"]
+                }    
 
         # Additional script notes in logs
         logging.info("\nFully Broker-Auto (Tradejini):")

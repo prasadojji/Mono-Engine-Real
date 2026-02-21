@@ -19,7 +19,7 @@ from openapi_client.api import SymbolDetailsApi
 # Import our new module (the sensex_options.py you created)
 from mono_engine.modules.sensex_options import SensexOptions
 from mono_engine.modules.order import Order  # For your test order (optional now, since conditional)
-from mono_engine.modules.charting_engine import ChartingEngine
+#from mono_engine.modules.charting_engine import ChartingEngine
 
 
 # ======================
@@ -59,22 +59,23 @@ if engine.login():
         market_data._load_watchlist()  # Ensure we have the fresh watchlist after user selection
 
     # === NEW: Charting Engine Integration (relaxed condition — spot_token can be set later on tick) ===
-    market_data = engine.modules.get('market_data')
-    state_module = engine.modules.get('state')
-    if market_data and state_module and market_data.watchlist:
-        charting_engine = ChartingEngine(
-            market_data=market_data,
-            state_trade_object=state_module.state,  # Pass the inner TradeState object
-            timeframes=["1min", "5min"],
-            visible_candles=300
-        )
-        logging.info("ChartingEngine initialized — chart will start plotting when spot token & ticks arrive")
-    else:
-        logging.error("Cannot start charting — missing market_data (%s), state (%s), or watchlist (len=%s)",
-                      market_data is not None,
-                      state_module is not None,
-                      len(market_data.watchlist) if market_data else 0)
+#    market_data = engine.modules.get('market_data')
+#    state_module = engine.modules.get('state')
+#    if market_data and state_module and market_data.watchlist:
+#        charting_engine = ChartingEngine(
+#            market_data=market_data,
+#            state_trade_object=state_module.state,  # Pass the inner TradeState object
+#            timeframes=["1min", "5min"],
+#            visible_candles=300
+#        )
+#        logging.info("ChartingEngine initialized — chart will start plotting when spot token & ticks arrive")
+#    else:
+#        logging.error("Cannot start charting — missing market_data (%s), state (%s), or watchlist (len=%s)",
+#                      market_data is not None,
+#                      state_module is not None,
+#                      len(market_data.watchlist) if market_data else 0)
         charting_engine = None
+        logging.info("ChartingEngine intentionally disabled — no browser charts")
 
     # === TEMP: Simulate buy/sell signals for testing (uncomment when ready to test paper fills & markers) ===
     # state = engine.modules.get('state')
@@ -107,8 +108,8 @@ if engine.login():
     logging.info("Engine running — press Ctrl+C to stop")
     while True:
         time.sleep(1)
-        if charting_engine:
-            charting_engine.update()  # Refresh chart every second (builds/plots candles + markers when data ready)
+#        if charting_engine:
+#            charting_engine.update()  # Refresh chart every second (builds/plots candles + markers when data ready)
 else:
     logging.error("Login failed—exiting.")
 

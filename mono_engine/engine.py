@@ -7,7 +7,7 @@ from mono_engine.config import Config
 from mono_engine.core.events import EventDispatcher
 from mono_engine.core.session import Session
 from mono_engine.core.streamer import Streamer
-
+#from mono_engine.strategies import strategy
 class MonoEngine:
     def __init__(self, config_path: str = 'config.yaml'):
         self.config = Config.load(config_path)
@@ -26,16 +26,34 @@ class MonoEngine:
         class_map = {
             'portfolio': 'Portfolio',  # Assuming your existing portfolio.py class name
             'state': 'StateModule',    # For state.py
-            'market_data': 'MarketData'    
+            'market_data': 'MarketData',
+            'strategy': 'StrategyModule'  
             # Add others as needed; execution (order/paper) loaded conditionally
         }
+
+        # Ensure the 'strategies' sub-package is on sys.path so relative imports work
+        import sys
+        import os
+        strategies_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'strategies'))
+        if strategies_path not in sys.path:
+            sys.path.insert(0, strategies_path)
+            logging.debug(f"Added strategies path to sys.path: {strategies_path}")
+        
         for module_name in self.config.enabled_modules:
             if module_name == 'order':  # Skip; handled conditionally
                 continue
+            
             try:
-                module_path = f"mono_engine.modules.{module_name}"
+                # Special case for strategy (located in strategies/ folder, not modules/)
+                if module_name == 'strategy':
+                    module_path = "mono_engine.strategies.strategy"
+                else:
+                    module_path = f"mono_engine.modules.{module_name}"
+                
                 module = importlib.import_module(module_path)
+                logging.info(f"Attempting to import module {module_name} from path: {module_path}")
                 class_name = class_map.get(module_name)
+                
                 if class_name and hasattr(module, class_name):
                     module_class = getattr(module, class_name)
                     module_instance = module_class(self)
@@ -43,6 +61,7 @@ class MonoEngine:
                     logging.info(f"Loaded module: {module_name} ({class_name})")
                 else:
                     logging.error(f"Module {module_name} has no class {class_name or 'unknown'}")
+            
             except Exception as e:
                 logging.error(f"Failed to load module {module_name}: {e}")
 
@@ -55,7 +74,7 @@ class MonoEngine:
             from mono_engine.modules.order import Order
             execution_class = Order
             execution_name = 'order'
-
+        
         try:
             execution_instance = execution_class(self)
             self.modules['execution'] = execution_instance  # Unified key for access (e.g., in signals)

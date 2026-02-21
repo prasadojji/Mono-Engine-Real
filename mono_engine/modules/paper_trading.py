@@ -24,6 +24,7 @@ Usage:
 import logging
 import time
 from datetime import datetime
+import csv
 from typing import Dict, Optional
 import sqlite3  # For DB storage (Phase 4)
 
@@ -113,6 +114,15 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
         
         # Log simulation
         self.logger.info(f"SIMULATED {side.upper()} FILL | ID: {order_id} | {qty} {symbol} @ {real_price}")
+        self.logger.info(f"Paper trade executed: {side.upper()} {symbol} @ {real_price} Qty {qty}")
+
+        # Inside _simulate_fill or after fill
+        log_file = "paper_trades.csv"
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), side.upper(), symbol, real_price, qty, pnl if 'pnl' in locals() else 0]
+        with open(log_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(row)
+        self.logger.info(f"Trade logged to {log_file}")
         
         # Store in DB (Phase 4 stub)
         self._store_trade(order_id, symbol, side, qty, real_price, fill_time)
@@ -177,6 +187,8 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
         return None
 
     def _handle_buy_signal(self, data: Dict):
+        if not data:  # Safety
+            return
         if self.engine.modules['state'].is_in_trade():
             self.logger.warning("Already in_trade — ignoring buy signal")
             return
@@ -185,6 +197,9 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
         subscribed_symbol = data.get('subscribed_symbol')
         price = data.get('price', 0.0)
         qty = data.get('quantity', PAPER_QTY)
+        if not subscribed_symbol:
+            self.logger.warning("No subscribed_symbol in buy_signal — skipping")
+            return
         
         real_price = self._get_real_price(subscribed_symbol, price)  # Prefer real LTP
         self._simulate_fill(symbol, 'buy', 'limit', real_price)
