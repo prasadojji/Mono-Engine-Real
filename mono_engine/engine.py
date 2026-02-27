@@ -27,7 +27,8 @@ class MonoEngine:
             'portfolio': 'Portfolio',  # Assuming your existing portfolio.py class name
             'state': 'StateModule',    # For state.py
             'market_data': 'MarketData',
-            'strategy': 'StrategyModule'  
+            'strategy': 'StrategyModule',
+            'stoploss': 'StoplossModule'  
             # Add others as needed; execution (order/paper) loaded conditionally
         }
 

@@ -6,9 +6,11 @@ from matplotlib.patches import Arrow
 import datetime
 import shelve
 import os
+import pandas as pd
 
 from typing import Dict, Tuple
-from base_strategy import BaseStrategy
+#from base_strategy import BaseStrategy
+from mono_engine.strategies.base_strategy import BaseStrategy
 
 
 class AFLStrategy(BaseStrategy):
@@ -17,6 +19,9 @@ class AFLStrategy(BaseStrategy):
     """
     def __init__(self, params: Dict = None):
         super().__init__(params)
+        # NEW: Debug flag — set to True for logs, False for clean runs
+        self.debug = False  # Default off; change to True when debugging
+        pd.set_option('future.no_silent_downcasting', True)
         
         # Merge defaults (we'll expand this later)
         default_params = {

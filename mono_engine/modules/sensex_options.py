@@ -157,7 +157,8 @@ class SensexOptions:
         selection = input("\nEnter row numbers to add to watchlist (comma-separated/ranges, e.g., '1,3-5,7', or 'all' for everything): ").strip().lower()
         if selection:
             selected_rows = self._parse_selection(selection, grid)
-            existing_tokens = {item['token'] for item in self.watchlist}  # Track existing tokens
+            #existing_tokens = {item['token'] for item in self.watchlist}  # Track existing tokens
+            existing_tokens = {item.get('token') for item in self.watchlist if item.get('token') is not None}
             added_count = 0
 
             for row_num in selected_rows:
@@ -207,7 +208,10 @@ class SensexOptions:
                 time.sleep(8)  # give time for first ticks to arrive
 
                 updated_grid = []
+                logging.debug(f"Watchlist for LTP update: {self.watchlist}")
                 for item in self.watchlist:
+                    if 'strike' not in item or item.get('type') not in ['CE', 'PE']:  # Skip spot or invalid
+                        continue
                     ce_token = item['token'] if item['type'] == 'CE' else None
                     pe_token = item['token'] if item['type'] == 'PE' else None
                     
@@ -221,14 +225,13 @@ class SensexOptions:
                     if pe_token:
                         pe_quote = self.engine.modules['market_data'].quotes.get(f"{pe_token}_BFO", {})
                         pe_ltp = pe_quote.get('ltp', 'N/A')
-
                     updated_grid.append([
-                        item['strike'],
-                        item['type'],
+                        item.get('strike', 'N/A'),  # Safe get
+                        item.get('type', 'N/A'),
                         item.get('symbol', 'N/A'),
                         ce_ltp if item['type'] == 'CE' else '—',
                         pe_ltp if item['type'] == 'PE' else '—',
-                        item['strike'] - base_strike   # offset
+                        item.get('strike', 0) - base_strike   # Default 0 if missing
                     ])
 
                 print("\nSelected Strikes with Current LTP:")

@@ -107,7 +107,10 @@ if engine.login():
     # Main loop
     logging.info("Engine running — press Ctrl+C to stop")
     while True:
-        time.sleep(1)
+        time.sleep(0.1)  # Lower sleep for faster processing
+        market_data = engine.modules.get('market_data')
+        if market_data:
+            market_data.process_amibroker_queue()  # Process on main thread
 #        if charting_engine:
 #            charting_engine.update()  # Refresh chart every second (builds/plots candles + markers when data ready)
 else:

@@ -1,0 +1,600 @@
+[
+    {
+        "symbol": "SENSEX_SPOT",
+        "id": "-51_BSE",
+        "type": "spot",
+        "description": "BSE Sensex Index (auto-added)"
+    },
+    {
+        "symbol": "SENSEX 26Feb26 82300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-26_82300_CE",
+        "type": "CE",
+        "expiry": "2026-02-26",
+        "strike": 82300,
+        "description": "ATM for 2026-02-20 open 82272.5"
+    },
+    {
+        "symbol": "SENSEX 26Feb26 82300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-26_82300_PE",
+        "type": "PE",
+        "expiry": "2026-02-26",
+        "strike": 82300,
+        "description": "ATM for 2026-02-20 open 82272.5"
+    },
+    {
+        "symbol": "SENSEX 26Feb26 84000 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-26_84000_CE",
+        "type": "CE",
+        "expiry": "2026-02-26",
+        "strike": 84000,
+        "description": "ATM for 2026-02-19 open 83969.8"
+    },
+    {
+        "symbol": "SENSEX 26Feb26 84000 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-26_84000_PE",
+        "type": "PE",
+        "expiry": "2026-02-26",
+        "strike": 84000,
+        "description": "ATM for 2026-02-19 open 83969.8"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 83600 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_83600_CE",
+        "type": "CE",
+        "expiry": "2026-02-19",
+        "strike": 83600,
+        "description": "ATM for 2026-02-18 open 83553.6"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 83600 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_83600_PE",
+        "type": "PE",
+        "expiry": "2026-02-19",
+        "strike": 83600,
+        "description": "ATM for 2026-02-18 open 83553.6"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 83200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_83200_CE",
+        "type": "CE",
+        "expiry": "2026-02-19",
+        "strike": 83200,
+        "description": "ATM for 2026-02-17 open 83197.7"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 83200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_83200_PE",
+        "type": "PE",
+        "expiry": "2026-02-19",
+        "strike": 83200,
+        "description": "ATM for 2026-02-17 open 83197.7"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 82500 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_82500_CE",
+        "type": "CE",
+        "expiry": "2026-02-19",
+        "strike": 82500,
+        "description": "ATM for 2026-02-16 open 82480.4"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 82500 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_82500_PE",
+        "type": "PE",
+        "expiry": "2026-02-19",
+        "strike": 82500,
+        "description": "ATM for 2026-02-16 open 82480.4"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 82900 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_82900_CE",
+        "type": "CE",
+        "expiry": "2026-02-19",
+        "strike": 82900,
+        "description": "ATM for 2026-02-13 open 82902.7"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 82900 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_82900_PE",
+        "type": "PE",
+        "expiry": "2026-02-19",
+        "strike": 82900,
+        "description": "ATM for 2026-02-13 open 82902.7"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 84000 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_84000_CE",
+        "type": "CE",
+        "expiry": "2026-02-19",
+        "strike": 84000,
+        "description": "ATM for 2026-02-12 open 83968.4"
+    },
+    {
+        "symbol": "SENSEX 19Feb26 84000 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-19_84000_PE",
+        "type": "PE",
+        "expiry": "2026-02-19",
+        "strike": 84000,
+        "description": "ATM for 2026-02-12 open 83968.4"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 84300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_84300_CE",
+        "type": "CE",
+        "expiry": "2026-02-12",
+        "strike": 84300,
+        "description": "ATM for 2026-02-11 open 84339.1"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 84300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_84300_PE",
+        "type": "PE",
+        "expiry": "2026-02-12",
+        "strike": 84300,
+        "description": "ATM for 2026-02-11 open 84339.1"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 84200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_84200_CE",
+        "type": "CE",
+        "expiry": "2026-02-12",
+        "strike": 84200,
+        "description": "ATM for 2026-02-10 open 84210.0"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 84200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_84200_PE",
+        "type": "PE",
+        "expiry": "2026-02-12",
+        "strike": 84200,
+        "description": "ATM for 2026-02-10 open 84210.0"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 83200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_83200_CE",
+        "type": "CE",
+        "expiry": "2026-02-12",
+        "strike": 83200,
+        "description": "ATM for 2026-02-06 open 83249.3"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 83200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_83200_PE",
+        "type": "PE",
+        "expiry": "2026-02-12",
+        "strike": 83200,
+        "description": "ATM for 2026-02-06 open 83249.3"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 83800 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_83800_CE",
+        "type": "CE",
+        "expiry": "2026-02-12",
+        "strike": 83800,
+        "description": "ATM for 2026-02-05 open 83757.5"
+    },
+    {
+        "symbol": "SENSEX 12Feb26 83800 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-12_83800_PE",
+        "type": "PE",
+        "expiry": "2026-02-12",
+        "strike": 83800,
+        "description": "ATM for 2026-02-05 open 83757.5"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 83300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_83300_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 83300,
+        "description": "ATM for 2026-02-04 open 83252.1"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 83300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_83300_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 83300,
+        "description": "ATM for 2026-02-04 open 83252.1"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 85300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_85300_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 85300,
+        "description": "ATM for 2026-02-03 open 85323.2"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 85300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_85300_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 85300,
+        "description": "ATM for 2026-02-03 open 85323.2"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 80600 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_80600_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 80600,
+        "description": "ATM for 2026-02-02 open 80555.7"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 80600 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_80600_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 80600,
+        "description": "ATM for 2026-02-02 open 80555.7"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 82200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_82200_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 82200,
+        "description": "ATM for 2026-02-01 open 82189.6"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 82200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_82200_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 82200,
+        "description": "ATM for 2026-02-01 open 82189.6"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 81900 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_81900_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 81900,
+        "description": "ATM for 2026-01-30 open 81947.3"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 81900 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_81900_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 81900,
+        "description": "ATM for 2026-01-30 open 81947.3"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 82400 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_82400_CE",
+        "type": "CE",
+        "expiry": "2026-02-05",
+        "strike": 82400,
+        "description": "ATM for 2026-01-29 open 82369.0"
+    },
+    {
+        "symbol": "SENSEX 05Feb26 82400 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-02-05_82400_PE",
+        "type": "PE",
+        "expiry": "2026-02-05",
+        "strike": 82400,
+        "description": "ATM for 2026-01-29 open 82369.0"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 81900 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_81900_CE",
+        "type": "CE",
+        "expiry": "2026-01-29",
+        "strike": 81900,
+        "description": "ATM for 2026-01-28 open 81892.4"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 81900 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_81900_PE",
+        "type": "PE",
+        "expiry": "2026-01-29",
+        "strike": 81900,
+        "description": "ATM for 2026-01-28 open 81892.4"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 81400 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_81400_CE",
+        "type": "CE",
+        "expiry": "2026-01-29",
+        "strike": 81400,
+        "description": "ATM for 2026-01-27 open 81436.8"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 81400 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_81400_PE",
+        "type": "PE",
+        "expiry": "2026-01-29",
+        "strike": 81400,
+        "description": "ATM for 2026-01-27 open 81436.8"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 82300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_82300_CE",
+        "type": "CE",
+        "expiry": "2026-01-29",
+        "strike": 82300,
+        "description": "ATM for 2026-01-23 open 82335.9"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 82300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_82300_PE",
+        "type": "PE",
+        "expiry": "2026-01-29",
+        "strike": 82300,
+        "description": "ATM for 2026-01-23 open 82335.9"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 82500 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_82500_CE",
+        "type": "CE",
+        "expiry": "2026-01-29",
+        "strike": 82500,
+        "description": "ATM for 2026-01-22 open 82459.7"
+    },
+    {
+        "symbol": "SENSEX 29Jan26 82500 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-29_82500_PE",
+        "type": "PE",
+        "expiry": "2026-01-29",
+        "strike": 82500,
+        "description": "ATM for 2026-01-22 open 82459.7"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 81800 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_81800_CE",
+        "type": "CE",
+        "expiry": "2026-01-22",
+        "strike": 81800,
+        "description": "ATM for 2026-01-21 open 81794.6"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 81800 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_81800_PE",
+        "type": "PE",
+        "expiry": "2026-01-22",
+        "strike": 81800,
+        "description": "ATM for 2026-01-21 open 81794.6"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83200_CE",
+        "type": "CE",
+        "expiry": "2026-01-22",
+        "strike": 83200,
+        "description": "ATM for 2026-01-20 open 83207.4"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83200_PE",
+        "type": "PE",
+        "expiry": "2026-01-22",
+        "strike": 83200,
+        "description": "ATM for 2026-01-20 open 83207.4"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83500 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83500_CE",
+        "type": "CE",
+        "expiry": "2026-01-22",
+        "strike": 83500,
+        "description": "ATM for 2026-01-19 open 83494.5"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83500 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83500_PE",
+        "type": "PE",
+        "expiry": "2026-01-22",
+        "strike": 83500,
+        "description": "ATM for 2026-01-19 open 83494.5"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83700 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83700_CE",
+        "type": "CE",
+        "expiry": "2026-01-22",
+        "strike": 83700,
+        "description": "ATM for 2026-01-16 open 83670.8"
+    },
+    {
+        "symbol": "SENSEX 22Jan26 83700 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-22_83700_PE",
+        "type": "PE",
+        "expiry": "2026-01-22",
+        "strike": 83700,
+        "description": "ATM for 2026-01-16 open 83670.8"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 83400 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_83400_CE",
+        "type": "CE",
+        "expiry": "2026-01-15",
+        "strike": 83400,
+        "description": "ATM for 2026-01-14 open 83358.5"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 83400 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_83400_PE",
+        "type": "PE",
+        "expiry": "2026-01-15",
+        "strike": 83400,
+        "description": "ATM for 2026-01-14 open 83358.5"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84100 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84100_CE",
+        "type": "CE",
+        "expiry": "2026-01-15",
+        "strike": 84100,
+        "description": "ATM for 2026-01-13 open 84079.3"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84100 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84100_PE",
+        "type": "PE",
+        "expiry": "2026-01-15",
+        "strike": 84100,
+        "description": "ATM for 2026-01-13 open 84079.3"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84000 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84000_CE",
+        "type": "CE",
+        "expiry": "2026-01-15",
+        "strike": 84000,
+        "description": "ATM for 2026-01-09 open 84022.1"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84000 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84000_PE",
+        "type": "PE",
+        "expiry": "2026-01-15",
+        "strike": 84000,
+        "description": "ATM for 2026-01-09 open 84022.1"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84800 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84800_CE",
+        "type": "CE",
+        "expiry": "2026-01-15",
+        "strike": 84800,
+        "description": "ATM for 2026-01-08 open 84778.0"
+    },
+    {
+        "symbol": "SENSEX 15Jan26 84800 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-15_84800_PE",
+        "type": "PE",
+        "expiry": "2026-01-15",
+        "strike": 84800,
+        "description": "ATM for 2026-01-08 open 84778.0"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 84600 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_84600_CE",
+        "type": "CE",
+        "expiry": "2026-01-08",
+        "strike": 84600,
+        "description": "ATM for 2026-01-07 open 84620.4"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 84600 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_84600_PE",
+        "type": "PE",
+        "expiry": "2026-01-08",
+        "strike": 84600,
+        "description": "ATM for 2026-01-07 open 84620.4"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 85300 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_85300_CE",
+        "type": "CE",
+        "expiry": "2026-01-08",
+        "strike": 85300,
+        "description": "ATM for 2026-01-06 open 85331.1"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 85300 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_85300_PE",
+        "type": "PE",
+        "expiry": "2026-01-08",
+        "strike": 85300,
+        "description": "ATM for 2026-01-06 open 85331.1"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 85600 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_85600_CE",
+        "type": "CE",
+        "expiry": "2026-01-08",
+        "strike": 85600,
+        "description": "ATM for 2026-01-05 open 85640.1"
+    },
+    {
+        "symbol": "SENSEX 08Jan26 85600 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-08_85600_PE",
+        "type": "PE",
+        "expiry": "2026-01-08",
+        "strike": 85600,
+        "description": "ATM for 2026-01-05 open 85640.1"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 84600 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_84600_CE",
+        "type": "CE",
+        "expiry": "2026-01-01",
+        "strike": 84600,
+        "description": "ATM for 2025-12-30 open 84601.0"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 84600 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_84600_PE",
+        "type": "PE",
+        "expiry": "2026-01-01",
+        "strike": 84600,
+        "description": "ATM for 2025-12-30 open 84601.0"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 85000 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_85000_CE",
+        "type": "CE",
+        "expiry": "2026-01-01",
+        "strike": 85000,
+        "description": "ATM for 2025-12-29 open 85004.8"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 85000 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_85000_PE",
+        "type": "PE",
+        "expiry": "2026-01-01",
+        "strike": 85000,
+        "description": "ATM for 2025-12-29 open 85004.8"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 85200 CE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_85200_CE",
+        "type": "CE",
+        "expiry": "2026-01-01",
+        "strike": 85200,
+        "description": "ATM for 2025-12-26 open 85225.3"
+    },
+    {
+        "symbol": "SENSEX 01Jan26 85200 PE",
+        "id": "OPTIDX_SENSEX_BFO_2026-01-01_85200_PE",
+        "type": "PE",
+        "expiry": "2026-01-01",
+        "strike": 85200,
+        "description": "ATM for 2025-12-26 open 85225.3"
+    },
+    {
+        "symbol": "SENSEX 25Dec25 85500 CE",
+        "id": "OPTIDX_SENSEX_BFO_2025-12-25_85500_CE",
+        "type": "CE",
+        "expiry": "2025-12-25",
+        "strike": 85500,
+        "description": "ATM for 2025-12-24 open 85533.1"
+    },
+    {
+        "symbol": "SENSEX 25Dec25 85500 PE",
+        "id": "OPTIDX_SENSEX_BFO_2025-12-25_85500_PE",
+        "type": "PE",
+        "expiry": "2025-12-25",
+        "strike": 85500,
+        "description": "ATM for 2025-12-24 open 85533.1"
+    },
+    {
+        "symbol": "SENSEX 25Dec25 85700 CE",
+        "id": "OPTIDX_SENSEX_BFO_2025-12-25_85700_CE",
+        "type": "CE",
+        "expiry": "2025-12-25",
+        "strike": 85700,
+        "description": "ATM for 2025-12-23 open 85690.1"
+    },
+    {
+        "symbol": "SENSEX 25Dec25 85700 PE",
+        "id": "OPTIDX_SENSEX_BFO_2025-12-25_85700_PE",
+        "type": "PE",
+        "expiry": "2025-12-25",
+        "strike": 85700,
+        "description": "ATM for 2025-12-23 open 85690.1"
+    }
+]

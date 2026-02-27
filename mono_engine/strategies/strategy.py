@@ -4,35 +4,31 @@ import pandas as pd
 from collections import defaultdict
 from datetime import datetime
 from typing import Dict
-import time  # ← ADD THIS LINE
+import time
 
 from mono_engine.modules.base import BaseModule
 from mono_engine.strategies.base_strategy import BaseStrategy
-from mono_engine.strategies.afl_strategy import AFLStrategy
+from mono_engine.strategies.Buy_AFL_python import Buy_AFL_python  # Updated import
 
 class StrategyModule(BaseModule):
     """
     Strategy Module (Buy/Sell Logic Engine)
     - Aggregates raw ticks into 1-min candles per symbol
-    - Feeds to per-symbol strategy instances (dummy or AFL)
+    - Feeds to per-symbol strategy instances (Buy_AFL_python)
     - Emits buy_signal / sell_signal events per symbol
     """
     def __init__(self, engine):
         super().__init__(engine)
         self.logger = logging.getLogger(__name__)
         
-        # Choose strategy class based on flag (no change to original AFL file)
-        import os
-        if os.getenv('USE_DUMMY_STRATEGY') == '1':
-            from tests.test_dummy_strategy import DummyMacdRsiStrategy
-            self.strategy_class = DummyMacdRsiStrategy
-            self.logger.info("Using DUMMY strategy for testing")
-        else:
-            from mono_engine.strategies.afl_strategy import AFLStrategy
-            self.strategy_class = AFLStrategy
-            self.logger.info("Using original AFL strategy")
+        # Use Buy_AFL_python
+        self.strategy_class = Buy_AFL_python
         
-        # Per-symbol strategy instances (created on first tick)
+        # Configurable base timeframe
+        self.base_timeframe = self.engine.config.get('strategy_params', {}).get('base_timeframe', '5min')
+        self.logger.info(f"Using base timeframe: {self.base_timeframe}")
+        
+        # Per-symbol strategy instances
         self.strategies = {}  # symbol -> BaseStrategy instance
         
         # Candle aggregation state per symbol (1min only for now)
@@ -40,8 +36,6 @@ class StrategyModule(BaseModule):
             'open': None, 'high': None, 'low': None, 'close': None, 'volume': 0,
             'current_time': None
         })
-        
-        # No primary_symbol filter anymore — process all watchlist symbols
 
     def start(self):
         self.events.subscribe('on_tick', self._on_tick)  # Use existing EVENT_TICK
@@ -60,7 +54,9 @@ class StrategyModule(BaseModule):
     def _get_or_create_strategy(self, symbol: str) -> BaseStrategy:
         if symbol not in self.strategies:
             params = self.engine.config.get('strategy_params', {})
+            params['base_timeframe'] = self.base_timeframe  # Pass to strategy
             self.strategies[symbol] = self.strategy_class(params=params)
+            self.strategies[symbol].debug = True  # Enable reasons logging
             self.logger.info(f"Created {self.strategy_class.__name__} instance for symbol: {symbol}")
         return self.strategies[symbol]
 
@@ -76,7 +72,7 @@ class StrategyModule(BaseModule):
         ts = datetime.fromtimestamp(tick.get('exchange_time', time.time()))
         self.logger.debug(f"Tick received: {symbol} LTP={ltp} Vol={vol} Time={ts}")
 
-        # Only process symbols in watchlist (optional filter — remove if you want all ticks)
+        # Only process symbols in watchlist
         watchlist_tokens = {f"{item['token']}_BFO" for item in self.engine.modules['market_data'].watchlist}
         if symbol not in watchlist_tokens and symbol != '-51_BSE':
             self.logger.debug(f"Tick for non-watchlist symbol {symbol} — skipped")
@@ -89,7 +85,7 @@ class StrategyModule(BaseModule):
         if data['current_time'] is None or minute_ts > data['current_time']:
             # New bar — push previous complete bar to strategy
             if data['current_time'] is not None:
-                df = pd.DataFrame([{
+                df_1min = pd.DataFrame([{
                     'Open': data['open'],
                     'High': data['high'],
                     'Low': data['low'],
@@ -97,9 +93,9 @@ class StrategyModule(BaseModule):
                     'Volume': data['volume']
                 }], index=[data['current_time']])
                 strategy = self._get_or_create_strategy(symbol)
-                strategy.on_data_update({'1min': df})
+                strategy.on_data_update({'1min': df_1min})
                 self._check_and_publish_signals(symbol)
-                self.logger.debug(f"Fed 1min candle to {symbol} at {data['current_time']}, Close={df['Close'].iloc[0]}")
+                self.logger.debug(f"Fed 1min candle to {symbol} at {data['current_time']}, Close={df_1min['Close'].iloc[0]}")
 
             # Start new bar
             data['open'] = data['high'] = data['low'] = data['close'] = ltp
@@ -115,8 +111,7 @@ class StrategyModule(BaseModule):
     def _check_and_publish_signals(self, symbol: str):
         strategy = self._get_or_create_strategy(symbol)
         enter, price = strategy.should_enter()
-        if enter and not self.engine.modules['state'].is_in_trade(symbol=symbol):  # per-symbol state if needed
-            # Publish for this symbol only (or loop over watchlist if multi-leg)
+        if enter:
             subscribed_symbol = symbol  # already token_BFO
             self.events.publish('buy_signal', {
                 'price': price or 0.0,
@@ -127,7 +122,7 @@ class StrategyModule(BaseModule):
             self.logger.info(f"{strategy.__class__.__name__} BUY SIGNAL for {symbol} at {price}")
 
         exit_, price = strategy.should_exit()
-        if exit_ and self.engine.modules['state'].is_in_trade(symbol=symbol):
+        if exit_:
             self.events.publish('sell_signal', {
                 'price': price or 0.0,
                 'symbol': symbol,

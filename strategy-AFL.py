@@ -108,6 +108,10 @@ class Strategy:
         self.df['BarIndex'] = np.arange(len(self.df))
         self.bi = self.df['BarIndex'].values
         self.bar_count = len(self.df)
+        self.df['tn'] = self.df.index.hour * 10000 + self.df.index.minute * 100 + self.df.index.second
+        self.df['timeOK'] = (self.df['tn'] >= 92500) & (self.df['tn'] <= 103000)
+        # Add others, use in loop for buy/sell if (self.df['timeOK'][i]): ...
+        # Forcesell: if tn[i] >= 151000 and in_position: sell=1
 
     def _resample(self, timeframe):
         """
