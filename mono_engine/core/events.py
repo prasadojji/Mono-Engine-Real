@@ -61,3 +61,4 @@ EVENT_GREEKS = "on_greeks"
 EVENT_CONNECT = "on_connect"
 EVENT_DISCONNECT = "on_disconnect"
 EVENT_ERROR = "on_error" 
+EVENT_1MIN_BAR_CLOSED = '1min_bar_closed'

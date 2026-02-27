@@ -1,179 +1,187 @@
+# mono_engine/modules/stoploss.py
+"""
+StopLoss & Trade Management Engine
+- Exact conversion of your AFL IN-POSITION logic (no skips)
+- Works identically in live (real/paper) and historical replay
+- Independent, event-driven, publishes 'exit_signal'
+"""
+
 import logging
-from collections import defaultdict, deque
-import numpy as np  # Assuming numpy is available in the environment
+from collections import defaultdict
+import numpy as np
+import talib
+from datetime import datetime
 
-from mono_engine.modules.base import BaseModule
+from .base import BaseModule
 
-class StopLossState:
-    def __init__(self):
-        self.entry_price = None
-        self.stop_loss = None
-        self.high_price = None
-        self.breach_count = 0
-        self.max_profit = 0.0
-        self.trailing_active = False
-        self.candle_history = deque(maxlen=50)  # Sufficient for ATR period, e.g., 14 + buffer
-
-def calculate_atr(candles, period=14):
-    if len(candles) < period + 1:
-        return None
-    highs = np.array([c['high'] for c in candles])
-    lows = np.array([c['low'] for c in candles])
-    closes = np.array([c['close'] for c in candles])
-    tr = np.maximum(highs[1:] - lows[1:],
-                    np.maximum(np.abs(highs[1:] - closes[:-1]),
-                               np.abs(lows[1:] - closes[:-1])))
-    atr = np.mean(tr[-period:])  # Simple moving average approximation; can be upgraded to Wilder's
-    return atr
 
 class StoplossModule(BaseModule):
     def __init__(self, engine):
         super().__init__(engine)
         self.logger = logging.getLogger(__name__)
-        self.params = self.config.get('stoploss_params', {})
-        self.initial_sl_pct = self.params.get('initial_sl_pct', 0.02)
-        self.breakeven_pct = self.params.get('breakeven_pct', 0.02)
-        self.profit_lock_pct = self.params.get('profit_lock_pct', 0.05)
-        self.trail_start_pct = self.params.get('trail_start_pct', 0.08)
-        self.atr_period = self.params.get('atr_period', 14)
-        self.atr_multiplier = self.params.get('atr_multiplier', 3.0)
-        self.breach_base_streak = self.params.get('breach_base_streak', 3)
-        self.breach_scale_factor = self.params.get('breach_scale_factor', 0.5)  # e.g., add 0.5 per 1% profit
-        self.profit_target_pct = self.params.get('profit_target_pct', 0.10)
-        self.quantity = self.params.get('quantity', 900)
-        
-        self.state = defaultdict(StopLossState)
-        
-        self.events.subscribe('state_updated', self.on_state_updated)
-        self.events.subscribe('on_tick', self.on_tick)
-        self.events.subscribe('on_connect', self.on_connect)
 
-    def on_state_updated(self, event):
-        symbol = event.get('symbol')
-        if not symbol:
-            return
-        in_trade = event.get('in_trade', False)
-        entry_price = event.get('entry_price')
-        
-        if in_trade and entry_price and not self.state[symbol].entry_price:
-            # New position opened
-            self.state[symbol].entry_price = entry_price
-            self.state[symbol].stop_loss = entry_price * (1 - self.initial_sl_pct)
-            self.state[symbol].high_price = entry_price
-            self.state[symbol].breach_count = 0
-            self.state[symbol].max_profit = 0.0
-            self.state[symbol].trailing_active = False
-            self.logger.info(f"StoplossModule: Position opened for {symbol} at {entry_price}. Initial SL: {self.state[symbol].stop_loss}")
+        # Per-symbol monitoring state (exact AFL variables)
+        self.monitor = defaultdict(lambda: {
+            'fixed_entry': 0.0,
+            'max_profit': 0.0,
+            'breakeven_flag': 0,
+            'profit_lock_flag': 0,
+            'trail_start_flag': 0,
+            'trail_stop': 0.0,
+            'breach_flag': 0,
+            'bars_breached': 0,
+            'consecutive_streak': 0,
+            'required_streak': self._get_config('required_streak', 3),
+        })
 
-    def on_tick(self, event):
-        symbol = event.get('symbol')
-        if not symbol or not self.state[symbol].entry_price:
-            return
-        
-        # Assume event has 'candle' with ohlcv or at least 'close' for current price
-        candle = event.get('candle', {})
-        current_price = candle.get('close', event.get('ltp'))  # Fallback to ltp if no candle
-        
-        if not current_price:
-            return
-        
-        # Append candle if available for ATR
-        if candle:
-            self.state[symbol].candle_history.append(candle)
-        
-        state = self.state[symbol]
-        state.high_price = max(state.high_price, current_price)
-        current_profit = (current_price - state.entry_price) / state.entry_price
-        state.max_profit = max(state.max_profit, (state.high_price - state.entry_price) / state.entry_price)
-        
-        # Breakeven
-        breakeven_level = state.entry_price * (1 + self.breakeven_pct)
-        if current_price > breakeven_level:
-            state.stop_loss = max(state.stop_loss, state.entry_price)
-        
-        # Profit lock at 5%
-        profit_lock_level = state.entry_price * (1 + self.profit_lock_pct)
-        if current_price > profit_lock_level:
-            # Lock in some profit, e.g., set SL to entry + 1% or adjustable
-            state.stop_loss = max(state.stop_loss, state.entry_price * (1 + self.profit_lock_pct / 5))  # Example: lock 1/5 of profit
-        
-        # Start trailing at 8%
-        trail_start_level = state.entry_price * (1 + self.trail_start_pct)
-        if current_price > trail_start_level:
-            state.trailing_active = True
-        
-        # ATR trailing if active
-        if state.trailing_active:
-            atr = calculate_atr(state.candle_history, self.atr_period)
-            if atr:
-                trailing_stop = current_price - atr * self.atr_multiplier
-                state.stop_loss = max(state.stop_loss, trailing_stop)
-        
-        # Check for sell conditions
-        reason = None
-        
-        # Profit target >10%
-        if state.max_profit > self.profit_target_pct:
-            reason = "profit target"
-        
-        # Stop loss breach with streak
-        if current_price < state.stop_loss:
-            state.breach_count += 1
-            # Scaled required streak: base + scale * current_profit * 100 (e.g., more profit, more confirmation needed)
-            required_streak = self.breach_base_streak + int(self.breach_scale_factor * max(0, current_profit * 100))
-            if state.breach_count >= required_streak:
-                reason = "breach streak"
-        else:
-            state.breach_count = 0  # Reset if above SL
-        
-        # Trailing stop immediate if breached (but since streak, perhaps combined)
-        if reason == "breach streak" and state.trailing_active:
-            reason = "trailing stop"
-        
-        if reason:
-            self.events.publish('sell_signal', {
-                'symbol': symbol,
-                'price': current_price,
-                'quantity': self.quantity
-            })
-            self.logger.info(f"StoplossModule triggered SELL for {symbol} at {current_price} (reason: {reason})")
-            # Reset state after sell
-            state.entry_price = None
-            state.stop_loss = None
-            state.high_price = None
-            state.breach_count = 0
-            state.max_profit = 0.0
-            state.trailing_active = False
-            state.candle_history.clear()
+        # For ATR(14) calculation on 1-min bars
+        self.hlc_history = defaultdict(list)  # list of (high, low, close)
 
-    def on_connect(self, event):
-        # Daily reset: reset breach counts or other daily vars; assuming no carry-over positions or adjust as needed
-        for symbol in list(self.state.keys()):
-            if self.state[symbol].entry_price:
-                self.state[symbol].breach_count = 0  # Example reset
-                # Could reset candle_history if daily, but probably not
-            else:
-                del self.state[symbol]  # Clean up unused
+        self.params = self.engine.config.get('stoploss', {}).get('default', {})
+        self.atr_period = 14
+        self.atr_mult_trail = self.params.get('ATRMult_Trail', 2.0)
+
+        self.logger.info("StoplossModule initialized (AFL logic loaded)")
 
     def start(self):
-        """Called when engine starts — subscribe to events, init state"""
-        self.logger.info(f"Starting {self.__class__.__name__}")
-        # Any additional startup logic if needed (e.g., load persisted state)
+        self.events.subscribe('trade_entered', self._on_trade_entered)
+        self.events.subscribe('1min_bar_closed', self._on_1min_bar_closed)
+        self.logger.info("StoplossModule started — monitoring for exits (fixed + trailing + streak + 10% protect)")
 
     def stop(self):
-        """Called on engine stop — cleanup"""
-        self.logger.info(f"Stopping {self.__class__.__name__}")
-        # Any cleanup if needed (e.g., unsubscribe events, save state)
+        self.events.unsubscribe('trade_entered', self._on_trade_entered)
+        self.events.unsubscribe('1min_bar_closed', self._on_1min_bar_closed)
+        self.logger.info("StoplossModule stopped")
 
-# Example config.yaml section for stoploss_params:
-# stoploss_params:
-#   initial_sl_pct: 0.02
-#   breakeven_pct: 0.02
-#   profit_lock_pct: 0.05
-#   trail_start_pct: 0.08
-#   atr_period: 14
-#   atr_multiplier: 3.0
-#   breach_base_streak: 3
-#   breach_scale_factor: 0.5
-#   profit_target_pct: 0.10
-#   quantity: 900
+    def _get_config(self, key, default):
+        return self.engine.config.get('stoploss', {}).get('default', {}).get(key, default)
+
+    def _on_trade_entered(self, data):
+        """Called when StateModule confirms a buy fill"""
+        symbol = data['symbol']
+        entry_price = data['entry_price']
+
+        self.monitor[symbol]['fixed_entry'] = entry_price
+        self.monitor[symbol]['max_profit'] = 0.0
+        self.monitor[symbol]['breakeven_flag'] = 0
+        self.monitor[symbol]['profit_lock_flag'] = 0
+        self.monitor[symbol]['trail_start_flag'] = 0
+        self.monitor[symbol]['trail_stop'] = 0.0
+        self.monitor[symbol]['bars_breached'] = 0
+        self.monitor[symbol]['consecutive_streak'] = 0
+
+        self.hlc_history[symbol].clear()  # fresh history for new trade
+
+        self.logger.info(f"Stoploss STARTED monitoring {symbol} @ entry {entry_price}")
+
+    def _on_1min_bar_closed(self, data):
+        """Exact AFL IN-POSITION logic — runs on every closed 1-min bar"""
+        symbol = data['symbol']
+        bar = data['bar']  # {'ts', 'open', 'high', 'low', 'close', 'volume'}
+
+        if not self.engine.modules['state'].is_in_trade(symbol):
+            return
+
+        state = self.monitor[symbol]
+        if state['fixed_entry'] <= 0:
+            return
+
+        current_high = float(bar['high'])
+        current_close = float(bar['close'])
+        entry = state['fixed_entry']
+
+        # === 1. Update MaxProfit & Flags (exact AFL) ===
+        cur_profit = (current_high - entry) / entry * 100 if entry > 0 else 0.0
+        state['max_profit'] = max(state['max_profit'], cur_profit)
+
+        if state['max_profit'] >= 2 and state['breakeven_flag'] == 0:
+            state['breakeven_flag'] = 1
+        if state['max_profit'] >= 5 and state['profit_lock_flag'] == 0:
+            state['profit_lock_flag'] = 1
+        if state['max_profit'] >= 8 and state['trail_start_flag'] == 0:
+            state['trail_start_flag'] = 1
+
+        # === 2. Calculate StopLossCurrent (exact AFL) ===
+        if state['profit_lock_flag']:
+            sl_mult = 1.02
+        elif state['breakeven_flag']:
+            sl_mult = 1.00
+        else:
+            sl_mult = 0.98
+        stop_loss_current = entry * sl_mult
+
+        # === 3. Trailing Stop (exact AFL) ===
+        if state['trail_start_flag']:
+            atr = self._compute_atr(symbol, bar)
+            candidate = current_high - atr * self.atr_mult_trail
+            state['trail_stop'] = max(max(state['trail_stop'], candidate), stop_loss_current)
+
+        effective_stop = state['trail_stop'] if state['trail_start_flag'] else stop_loss_current
+
+        # === 4. Breach & Streak Logic (exact AFL) ===
+        if current_close < effective_stop and state['trail_start_flag'] == 1:
+            if state['breach_flag'] == 0:
+                state['breach_flag'] = 1
+            state['bars_breached'] += 1
+            state['consecutive_streak'] += 1
+        elif current_close < effective_stop:
+            state['consecutive_streak'] = 0
+        else:
+            state['consecutive_streak'] = 0
+
+        # === 5. SELL LOGIC — EXACT 3 conditions from AFL ===
+        profit10 = entry * 1.10
+        req_streak = state['required_streak']
+
+        cond1 = (current_close < effective_stop) and (state['trail_start_flag'] == 0)
+        cond2 = (state['trail_start_flag'] == 1) and (current_close < effective_stop) and (state['consecutive_streak'] >= req_streak)
+        cond3 = (state['trail_start_flag'] == 1) and (state['max_profit'] > 10) and (current_close < profit10)
+
+        if cond1 or cond2 or cond3:
+            reason = "fixed_sl" if cond1 else "streak_breach" if cond2 else "profit_protect_10pct"
+            exit_price = current_close  # exact AFL: TradeExitPrice = currentMinClose
+
+            self.events.publish('exit_signal', {
+                'symbol': symbol,
+                'exit_price': exit_price,
+                'reason': reason,
+                'time': bar['ts'],
+                'quantity': self.engine.modules['state'].get_entry_details(symbol).quantity
+            })
+
+            self.logger.info(f"🚨 STOPLOSS TRIGGERED SELL {symbol} @ {exit_price:.2f} | Reason: {reason} | MaxProfit: {state['max_profit']:.1f}%")
+
+            self._reset_monitor(symbol)
+
+    def _compute_atr(self, symbol, current_bar):
+        """Running ATR(14) on 1-min bars"""
+        h, l, c = current_bar['high'], current_bar['low'], current_bar['close']
+        self.hlc_history[symbol].append((float(h), float(l), float(c)))
+        if len(self.hlc_history[symbol]) > 50:
+            self.hlc_history[symbol].pop(0)
+
+        if len(self.hlc_history[symbol]) < self.atr_period + 1:
+            return 0.0  # not enough data yet
+
+        highs = np.array([x[0] for x in self.hlc_history[symbol]])
+        lows = np.array([x[1] for x in self.hlc_history[symbol]])
+        closes = np.array([x[2] for x in self.hlc_history[symbol]])
+
+        atr_series = talib.ATR(highs, lows, closes, timeperiod=self.atr_period)
+        return float(atr_series[-1])
+
+    def _reset_monitor(self, symbol):
+        """Exact AFL reset on exit"""
+        self.monitor[symbol] = {
+            'fixed_entry': 0.0,
+            'max_profit': 0.0,
+            'breakeven_flag': 0,
+            'profit_lock_flag': 0,
+            'trail_start_flag': 0,
+            'trail_stop': 0.0,
+            'breach_flag': 0,
+            'bars_breached': 0,
+            'consecutive_streak': 0,
+            'required_streak': self._get_config('required_streak', 3),
+        }
+        self.hlc_history[symbol].clear()

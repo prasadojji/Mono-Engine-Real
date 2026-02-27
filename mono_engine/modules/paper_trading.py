@@ -20,138 +20,80 @@ Usage:
 - Loaded in run_engine.py if paper mode selected.
 - Handles signals or direct calls like real Order.
 """
+# mono_engine/modules/paper_trading.py
+"""
+PaperTrading Module - Simulation mode only.
+Now fully compatible with multi-symbol StateModule and central buy_signal handler.
+"""
 
 import logging
 import time
 from datetime import datetime
-import csv
-from typing import Dict, Optional
-import sqlite3  # For DB storage (Phase 4)
+from typing import Optional
 
 from .base import BaseModule
-from .order import Order, ORDER_TYPES  # Proxy the real Order for interface compatibility
+from .order import Order
 
-# NEW: For IST time checks
-from pytz import timezone  # Add this import; if not installed, use manual UTC+5:30 offset
 
-# Files & Cache (relative to project root or config path)
-options_file = 'symbols_BSEOptions.csv'
-index_file = 'symbols_Index.csv'
-cache_file = 'last_sensex_open.txt'
-watchlist_file = 'watchlist.json'  # New for persistence
-
-from mono_engine.core.events import EVENT_TICK, EVENT_CONNECT, EVENT_TRADE
-
-# Dummy order ID prefix
-DUMMY_ID_PREFIX = "PAPER-"
-
-# Hardcoded quantity for paper mode (as per user: 900; placeholder for Risk engine)
-PAPER_QTY = 900
-
-class PaperTrading(Order):  # Inherit from Order for interface compatibility
-    """
-    PaperTrading class: Simulates trading while using real market data.
-    Overrides key methods to simulate instead of executing live.
-    """
+class PaperTrading(Order):
     def __init__(self, engine):
         super().__init__(engine)
         self.logger = logging.getLogger(__name__)
-        self.db_conn = None  # SQLite connection (initialized in start)
-        # Access MarketData module via engine for real quotes
-        self.market_data = self.engine.modules.get('market_data', None)
-        if not self.market_data:
-            self.logger.warning("MarketData not found; simulations may lack real prices.")
+        self.market_data = self.engine.modules.get('market_data')
 
     def start(self):
-        """Start the module: Register event subscriptions and init DB."""
-        super().start()  # Call Order's start for signal subscriptions
-        self.events.subscribe('buy_signal', self._handle_buy_signal)
-        self.events.subscribe('sell_signal', self._handle_sell_signal)
-        self._init_db()  # Phase 4: Create/connect to DB
-        self.logger.info("PaperTrading started in simulation mode.")
+        super().start()
+        # REMOVED: subscribe to buy_signal / sell_signal here
+        # (We use the central handler in run_engine.py instead)
+        self.logger.info("PaperTrading started in simulation mode (central handler active)")
 
     def stop(self):
-        """Stop the module: Close DB and unsubscribe."""
         super().stop()
-        if self.db_conn:
-            self.db_conn.close()
-        self.logger.info("PaperTrading stopped.")
+        self.logger.info("PaperTrading stopped")
 
-    def _init_db(self):
-        """Initialize SQLite DB and create trades table if not exists."""
-        # TODO: Implement in Phase 4; stubbed for now
-        pass
+    def place_order(self, symbol, quantity, side, order_type="limit", price=None, **kwargs):
+        """Fixed for multi-symbol StateModule"""
+        state = self.engine.modules['state']
 
-    def _simulate_fill(self, symbol: str, side: str, order_type: str, price: Optional[float] = None):
-        """
-        Simulate an order fill: Get real price from MarketData, generate dummy ID,
-        publish events, update state/portfolio via events, store in DB.
-        """
-        # Get real current price from MarketData quotes (fallback to 0 if unavailable)
-        #real_price = self._get_real_price(symbol)
-        real_price = self._get_real_price(data)  # Pass full data dict
-        
-        # Generate dummy order ID
-        order_id = f"{DUMMY_ID_PREFIX}{int(time.time())}"
-        
-        # Simulate fill time
+        if side.lower() == 'buy':
+            if state.is_in_trade(symbol):          # ← FIXED: pass symbol
+                self.logger.info(f"Already in trade for {symbol} — skipping buy")
+                return None
+        else:  # sell
+            if not state.is_in_trade(symbol):      # ← FIXED: pass symbol
+                self.logger.info(f"Not in trade for {symbol} — skipping sell")
+                return None
+
+        return self._simulate_fill(symbol, side, order_type, price, quantity)
+
+    def _simulate_fill(self, symbol: str, side: str, order_type: str, price: Optional[float] = None, quantity: int = 900, **kwargs):
+        """Fixed signature + real price from MarketData"""
+        real_price = self._get_real_price(symbol, price)
+
+        order_id = f"PAPER-{int(time.time())}"
         fill_time = datetime.now()
-        
-        # Calculate qty (hardcoded; placeholder for Risk engine)
-        qty = PAPER_QTY  # TODO: Integrate with Quantity & Risk Engine (e.g., self.engine.modules['risk'].calculate_qty(...))
-        
-        # Publish 'order_filled' event (mimics real streamer)
+
         fill_data = {
             'order_id': order_id,
-            'scrip': symbol,  # Use symbol from watchlist
+            'scrip': symbol,
             'order_type': side.lower(),
             'price': real_price,
-            'quantity': qty,
-            'fill_time': fill_time
+            'quantity': quantity,
+            'fill_time': fill_time,
+            'buy_reason': kwargs.get('buy_reason', 'unknown') if 'kwargs' in locals() else 'unknown'  # ← add this
         }
+
         self.events.publish('order_filled', fill_data)
-        self.events.publish(EVENT_TRADE, fill_data)  # For Portfolio
-        
-        # Log simulation
-        self.logger.info(f"SIMULATED {side.upper()} FILL | ID: {order_id} | {qty} {symbol} @ {real_price}")
-        self.logger.info(f"Paper trade executed: {side.upper()} {symbol} @ {real_price} Qty {qty}")
+        self.logger.info(f"✅ SIMULATED {side.upper()} FILL | {quantity} {symbol} @ {real_price:.2f} | ID: {order_id}")
 
-        # Inside _simulate_fill or after fill
-        log_file = "paper_trades.csv"
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), side.upper(), symbol, real_price, qty, pnl if 'pnl' in locals() else 0]
-        with open(log_file, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(row)
-        self.logger.info(f"Trade logged to {log_file}")
-        
-        # Store in DB (Phase 4 stub)
-        self._store_trade(order_id, symbol, side, qty, real_price, fill_time)
-        
-        return {'s': 'ok', 'd': {'order_id': order_id}}  # Mimic real API response
+        return {'s': 'ok', 'd': {'order_id': order_id}}
 
-    def _get_real_price(self, subscribed_symbol: str, fallback_price: float = 0.0) -> float:
-        if subscribed_symbol and self.market_data and subscribed_symbol in self.market_data.quotes:
-            quote = self.market_data.quotes[subscribed_symbol]
-            ltp = quote.get('ltp', fallback_price)
-            self.logger.info(f"Real LTP for {subscribed_symbol}: {ltp}")
-            return ltp
-        self.logger.warning(f"No real quote for {subscribed_symbol}; using fallback {fallback_price}")
-        return fallback_price
-
-    def _store_trade(self, order_id: str, symbol: str, side: str, qty: int, price: float, fill_time: datetime,
-                     exit_price: Optional[float] = None, exit_time: Optional[datetime] = None, pnl: Optional[float] = None):
-        """Store simulated trade in DB (Phase 4)."""
-        # TODO: Implement in Phase 4
-        pass
-
-    # Overridden Methods (Proxy with Simulation)
-    def place_order(self, symbol, quantity, side, order_type="limit", price=None, **kwargs):
-        """Override: Simulate placement instead of real POST."""
-        if not self.engine.modules['state'].is_in_trade() if side == 'buy' else self.engine.modules['state'].is_in_trade():
-            return self._simulate_fill(symbol, side, order_type, price)
-        else:
-            self.logger.warning(f"State prevents {side} for {symbol} (in_trade: {self.engine.modules['state'].is_in_trade()})")
-            return None
+    def _get_real_price(self, symbol: str, fallback: float = 0.0) -> float:
+        if self.market_data and symbol in self.market_data.quotes:
+            quote = self.market_data.quotes[symbol]
+            ltp = quote.get('ltp') or quote.get('close') or fallback
+            return float(ltp)
+        return fallback
 
     def modify_order(self, order_id: str, **kwargs):
         """Override: Simulate modification (e.g., update price in pending)."""
@@ -186,23 +128,7 @@ class PaperTrading(Order):  # Inherit from Order for interface compatibility
                 return {'s': 'ok'}
         return None
 
-    def _handle_buy_signal(self, data: Dict):
-        if not data:  # Safety
-            return
-        if self.engine.modules['state'].is_in_trade():
-            self.logger.warning("Already in_trade — ignoring buy signal")
-            return
-            
-        symbol = data.get('symbol', 'UNKNOWN')
-        subscribed_symbol = data.get('subscribed_symbol')
-        price = data.get('price', 0.0)
-        qty = data.get('quantity', PAPER_QTY)
-        if not subscribed_symbol:
-            self.logger.warning("No subscribed_symbol in buy_signal — skipping")
-            return
-        
-        real_price = self._get_real_price(subscribed_symbol, price)  # Prefer real LTP
-        self._simulate_fill(symbol, 'buy', 'limit', real_price)
+    
 
     def _handle_sell_signal(self, data: Dict):
         if not self.engine.modules['state'].is_in_trade():

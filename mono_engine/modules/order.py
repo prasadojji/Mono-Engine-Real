@@ -59,7 +59,7 @@ class Order(BaseModule):
     def start(self):
         """Start the module: Register event subscriptions."""
         # Subscribe to signals from strategy (future module 6)
-        self.events.subscribe('buy_signal', self._handle_buy_signal)
+        #self.events.subscribe('buy_signal', self._handle_buy_signal)
         self.events.subscribe('sell_signal', self._handle_sell_signal)
         # Subscribe to streamer for order updates
         self.events.subscribe('on_order_update', self._on_order_update)

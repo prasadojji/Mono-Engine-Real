@@ -247,7 +247,7 @@ class MarketData(BaseModule):
             self.candles[symbol][tf] = df
             self.current_candle[symbol][tf] = None
 
-        # Timestamp handling
+        # Timestamp handling (your original code unchanged)
         ltt = tick.get("ltt")
         if ltt is not None:
             try:
@@ -263,18 +263,18 @@ class MarketData(BaseModule):
             ts = ts.replace(minute=(ts.minute // minutes) * minutes)
 
         price = float(tick.get("ltp") or tick.get("close") or 0)
-        volume_delta = int(tick.get("vol") or tick.get("volume") or 0)  # Assume incremental per tick
+        volume_delta = int(tick.get("vol") or tick.get("volume") or 0)
 
         if price == 0:
             logging.warning(f"Price fallback to 0 in {tf} candle for {symbol} — check tick fields")
-            return  # Skip invalid ticks
+            return
 
         current = self.current_candle[symbol][tf]
         if current is None or current["ts"] != ts:
             # Close previous candle if exists
             if current is not None:
                 prev = current
-                # Append to historical DF (in-memory)
+                # Append to historical DF (your original code unchanged)
                 new_row = pd.DataFrame([{
                     "open": prev["open"],
                     "high": prev["high"],
@@ -287,14 +287,26 @@ class MarketData(BaseModule):
                 else:
                     self.candles[symbol][tf] = pd.concat([self.candles[symbol][tf], new_row])
 
-                # NEW: For 1min only - Validate closed candle with broker API and update if needed
+                # Your original validation + AmiBroker push (unchanged)
                 if tf == "1min":
                     self._validate_and_update_closed_candle(symbol, prev["ts"], prev)
-
-                # NEW: Push the (possibly updated) closed candle to AmiBroker as a bar
                 self._push_bar_to_amibroker(symbol, prev["ts"], prev["open"], prev["high"], prev["low"], prev["close"], prev["volume"])
 
-            # Start new candle
+                # === NEW: Publish closed 1-min bar for StoplossModule ===
+                if tf == "1min":
+                    self.events.publish('1min_bar_closed', {
+                        'symbol': symbol,
+                        'bar': {
+                            'ts': prev["ts"],
+                            'open': prev["open"],
+                            'high': prev["high"],
+                            'low': prev["low"],
+                            'close': prev["close"],
+                            'volume': prev["volume"]
+                        }
+                    })
+
+            # Start new candle (your original code unchanged)
             self.current_candle[symbol][tf] = {
                 "ts": ts,
                 "open": price,
@@ -304,11 +316,11 @@ class MarketData(BaseModule):
                 "volume": volume_delta
             }
         else:
-            # Update current candle
+            # Update current candle (your original code unchanged)
             current["high"] = max(current["high"], price)
             current["low"] = min(current["low"], price)
             current["close"] = price
-            current["volume"] += volume_delta  # Cumulative from deltas
+            current["volume"] += volume_delta
 
     def get_candles(self, symbol: str, tf: str) -> pd.DataFrame:
         """Return full candle DataFrame for a symbol + timeframe (including current incomplete)."""

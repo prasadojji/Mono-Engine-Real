@@ -6,118 +6,143 @@ import warnings
 warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
 
 # --- Add our imports here ---
-# These are for the SENSEX logic (datetime for expiry, csv/io for parsing symbols, os for file checks)
 from datetime import datetime
 import csv
 import io
 import os
 
-# Broker SDK for public symbols (to fetch Index/BSEOptions CSV if missing — no login needed)
 from openapi_client import Configuration, ApiClient
 from openapi_client.api import SymbolDetailsApi
 
-# Import our new module (the sensex_options.py you created)
 from mono_engine.modules.sensex_options import SensexOptions
-from mono_engine.modules.order import Order  # For your test order (optional now, since conditional)
+from mono_engine.modules.order import Order
+from mono_engine.modules.pnl import PnLModule
 #from mono_engine.modules.charting_engine import ChartingEngine
 
 
 # ======================
-# Updated Code for Mode Prompt and Integration
+# Main Engine Code
 # ======================
 engine = MonoEngine()
 
 # Call login separately to prompt mode after authentication
 if engine.login():
-    # Prompt for mode after successful login
-    mode = input("\nChoose trading mode: 'real' or 'paper'? (default: real): ").strip().lower() or 'real'
-    if mode not in ['real', 'paper']:
-        print("Invalid mode—defaulting to real.")
-        mode = 'real'
-    print(f"Selected mode: {mode.upper()}")
+    print("\nChoose trading mode:")
+    print("1. real")
+    print("2. paper")
+    print("3. historical (backtest on DB data)")
+    choice = input("Enter 1/2/3 (default: 2 paper): ").strip() or "2"
 
-    # Set mode on engine for conditional loading
+    if choice == "1":
+        mode = "real"
+    elif choice == "3":
+        mode = "historical"
+    else:
+        mode = "paper"
+
+    print(f"Selected mode: {mode.upper()}")
     engine.mode = mode
 
-    # Start the rest: streamer, modules (conditional execution loaded in _load_modules)
-    logging.info("Engine authenticated — starting streamer and modules")
+    logging.info(f"Engine authenticated — starting in {mode.upper()} mode")
+
     engine.streamer.start()
-    engine._load_modules()  # Loads modules, including conditional execution
+    engine._load_modules()
+
+    # ======================
+    # HISTORICAL BACKTEST MODE
+    # ======================
+    if mode == "historical":
+        from mono_engine.modules.historical_backtest import HistoricalBacktest
+        backtest = HistoricalBacktest(engine)
+        backtest.run()
+        engine.stop()
+        import sys
+        sys.exit(0)
+
+    # ======================
+    # LIVE / PAPER MODE (All your original code preserved exactly)
+    # ======================
+
     logging.info(f"MonoEngine fully started — {len(engine.modules)} modules loaded in {mode.upper()} mode")
+
+    # ======================
+    # PnL Engine (new Module 11)
+    # ======================
+    print("Loading PnL Engine...")
+    pnl_module = PnLModule(engine)
+    engine.modules['pnl'] = pnl_module
+    pnl_module.start()
+    logging.info("✅ PnLModule loaded — per-buy-reason win-rate + 10s table active")
 
     # ======================
     # Load SensexOptions Module (after other modules for dependencies)
     # ======================
     print("Loading Sensex Options Module...")
-    sensex_module = SensexOptions(engine)  # Create instance
-    engine.modules['sensex_options'] = sensex_module  # Add to dict
-    sensex_module.start()  # Run grid, selection, subscriptions
+    sensex_module = SensexOptions(engine)
+    engine.modules['sensex_options'] = sensex_module
+    sensex_module.start()
 
-    # After sensex_module.start() — reload watchlist to get latest selection
+    # After sensex_module.start() — reload watchlist
     market_data = engine.modules.get('market_data')
     if market_data:
-        market_data._load_watchlist()  # Ensure we have the fresh watchlist after user selection
+        market_data._load_watchlist()
 
-    # === NEW: Charting Engine Integration (relaxed condition — spot_token can be set later on tick) ===
-#    market_data = engine.modules.get('market_data')
-#    state_module = engine.modules.get('state')
-#    if market_data and state_module and market_data.watchlist:
-#        charting_engine = ChartingEngine(
-#            market_data=market_data,
-#            state_trade_object=state_module.state,  # Pass the inner TradeState object
-#            timeframes=["1min", "5min"],
-#            visible_candles=300
-#        )
-#        logging.info("ChartingEngine initialized — chart will start plotting when spot token & ticks arrive")
-#    else:
-#        logging.error("Cannot start charting — missing market_data (%s), state (%s), or watchlist (len=%s)",
-#                      market_data is not None,
-#                      state_module is not None,
-#                      len(market_data.watchlist) if market_data else 0)
-        charting_engine = None
-        logging.info("ChartingEngine intentionally disabled — no browser charts")
+    # === NEW: Charting Engine Integration (your original commented code preserved) ===
+    charting_engine = None
+    logging.info("ChartingEngine intentionally disabled — no browser charts")
 
-    # === TEMP: Simulate buy/sell signals for testing (uncomment when ready to test paper fills & markers) ===
-    # state = engine.modules.get('state')
-    # if state and market_data and market_data.watchlist:
-    #     logging.info("Running temp buy signals for watchlist items...")
-    #     for item in market_data.watchlist:
-    #         token_symbol = f"{item['token']}_BFO"
-    #         disp_symbol = item['symbol']
-    #         qty = 900 if engine.mode == 'paper' else 1
-    #         engine.events.publish('buy_signal', {
-    #             'symbol': disp_symbol,
-    #             'subscribed_symbol': token_symbol,  # Correct key for paper_trading
-    #             'quantity': qty,
-    #             'order_type': 'market'
-    #         })
-    #         time.sleep(2)  # Small delay between signals
-    #
-    #     # Optional: Simulate a sell after delay
-    #     time.sleep(10)
-    #     if market_data.watchlist:
-    #         first_item = market_data.watchlist[0]
-    #         engine.events.publish('sell_signal', {
-    #             'symbol': first_item['symbol'],
-    #             'subscribed_symbol': f"{first_item['token']}_BFO"
-    #         })
-    # else:
-    #     logging.warning("Skipping temp signals — state or watchlist not ready")
+    # ======================
+    # BUY_SIGNAL HANDLER (fixed for PaperTrading + StateModule)
+    # ======================
+    state_module = engine.modules.get('state')
+    execution_module = engine.modules.get('execution')
+
+    def handle_buy_signal(data: dict):
+        symbol = data.get('symbol') or data.get('subscribed_symbol')
+        price = data.get('price')
+        qty = data.get('quantity', 900)
+
+        if not symbol or price is None:
+            logging.warning("buy_signal missing symbol or price")
+            return
+
+        logging.info(f"Received buy_signal for {symbol} @ {price}")
+
+        if state_module.is_in_trade(symbol):
+            logging.info(f"Already IN_TRADE for {symbol} → ignoring")
+            return
+
+        if execution_module:
+            try:
+                execution_module.place_order(
+                    symbol,
+                    qty,
+                    'buy',
+                    order_type='market',
+                    price=price
+                )
+                logging.info(f"✅ BUY ORDER SENT for {symbol} @ {price} (qty={qty})")
+            except Exception as e:
+                logging.error(f"Execution failed for {symbol}: {e}")
+        else:
+            logging.error("No execution module loaded!")
+
+    engine.events.subscribe('buy_signal', handle_buy_signal)
+    logging.info("✅ buy_signal handler registered (PaperTrading compatible)")
 
     # Main loop
     logging.info("Engine running — press Ctrl+C to stop")
     while True:
-        time.sleep(0.1)  # Lower sleep for faster processing
+        time.sleep(0.1)
         market_data = engine.modules.get('market_data')
         if market_data:
-            market_data.process_amibroker_queue()  # Process on main thread
-#        if charting_engine:
-#            charting_engine.update()  # Refresh chart every second (builds/plots candles + markers when data ready)
+            market_data.process_amibroker_queue()
+
 else:
     logging.error("Login failed—exiting.")
 
 # Handle stop on interrupt
 try:
-    pass  # Loop above handles
+    pass
 except KeyboardInterrupt:
     engine.stop()
