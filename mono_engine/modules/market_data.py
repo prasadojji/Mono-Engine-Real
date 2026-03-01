@@ -95,8 +95,13 @@ class MarketData(BaseModule):
 
     def _load_watchlist(self):
         if os.path.exists(watchlist_file):
-            with open(watchlist_file, 'r') as f:
-                loaded = json.load(f)
+            try:
+                with open(watchlist_file, 'r') as f:
+                    loaded = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load watchlist.json: {e}. Starting with empty watchlist.")
+                loaded = []
+            
             # Deduplicate by token
             seen = set()
             self.watchlist = []
@@ -287,12 +292,13 @@ class MarketData(BaseModule):
                 else:
                     self.candles[symbol][tf] = pd.concat([self.candles[symbol][tf], new_row])
 
-                # Your original validation + AmiBroker push (unchanged)
-                if tf == "1min":
-                    self._validate_and_update_closed_candle(symbol, prev["ts"], prev)
+                # === VALIDATION DISABLED to stop 429 spam ===
+                # if tf == "1min":
+                #     self._validate_and_update_closed_candle(symbol, prev["ts"], prev)
+
                 self._push_bar_to_amibroker(symbol, prev["ts"], prev["open"], prev["high"], prev["low"], prev["close"], prev["volume"])
 
-                # === NEW: Publish closed 1-min bar for StoplossModule ===
+                # === Publish closed 1-min bar for StoplossModule (kept) ===
                 if tf == "1min":
                     self.events.publish('1min_bar_closed', {
                         'symbol': symbol,
@@ -348,10 +354,18 @@ class MarketData(BaseModule):
     
     def _validate_and_update_closed_candle(self, symbol: str, candle_ts: datetime, candle_data: dict):
         """Query broker API for official 1-min bar and update in-memory if mismatch."""
+        # === RATE LIMIT GUARD (added - prevents 429) ===
+        if not hasattr(self, '_last_validation'):
+            self._last_validation = {}
+        now = time.time()
+        if symbol in self._last_validation and now - self._last_validation[symbol] < 60:  # max 1 validation per minute per symbol
+            return
+        self._last_validation[symbol] = now
+        # === End of rate limit guard ===
+
         try:
             # Get symbol's full_id (from watchlist or historical; assume spot for example)
             full_id = self._get_full_id_for_symbol(symbol)  # Implement this helper below
-
             # Query for exactly this minute
             from_time = int(candle_ts.timestamp())
             to_time = from_time + 60  # Next minute start
@@ -369,7 +383,6 @@ class MarketData(BaseModule):
                 official_low = official_bar[3]
                 official_close = official_bar[4]
                 official_volume = official_bar[5]
-
                 # Check for mismatch (allow small tolerance for floating point)
                 if (abs(candle_data['open'] - official_open) > 0.01 or
                     abs(candle_data['high'] - official_high) > 0.01 or
@@ -869,6 +882,152 @@ class MarketData(BaseModule):
             #    self.streamer.subscribeL1Snapshot(all_symbols)
             logging.info(f"SUBSCRIBED L1 + Snapshot for {len(all_symbols)} symbols (spot + options)")
 
+    def load_historical_candles(self):
+        """DELTA backfill — only new bars since last run. Fast & efficient."""
+        original_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.WARNING)
+
+        ist = timezone('Asia/Kolkata')
+        now = datetime.now(ist)
+        market_start = now - timedelta(days=200)
+        market_start = market_start.replace(hour=9, minute=15, second=0, microsecond=0)
+        from_time = int(market_start.timestamp())
+        to_time = int(now.timestamp())
+
+        logging.info(f"Backfilling historical 1min candles (DELTA mode)")
+
+        db_path = 'mono_engine_data.db'
+        historical_items = self.load_historical_symbols()
+
+        # === symbol_progress table for true delta ===
+        conn_prog = sqlite3.connect(db_path)
+        cur_prog = conn_prog.cursor()
+        cur_prog.execute('''
+            CREATE TABLE IF NOT EXISTS symbol_progress (
+                symbol TEXT PRIMARY KEY,
+                last_ts DATETIME,
+                last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn_prog.commit()
+
+        # Merge watchlist items (your original logic)
+        watchlist_items = self.watchlist
+        all_items = historical_items.copy()
+        seen_ids = {item.get('id') for item in all_items if item.get('id')}
+
+        for wl_item in watchlist_items:
+            wl_id = wl_item.get('id')
+            if not wl_id:
+                expiry_str = wl_item.get('expiry', 'UNKNOWN')
+                strike = wl_item.get('strike', '')
+                opt_type = wl_item.get('type', '')
+                wl_id = f"OPTIDX_SENSEX_BFO_{expiry_str}_{strike}_{opt_type}"
+                wl_item['id'] = wl_id
+            if wl_id not in seen_ids:
+                all_items.append(wl_item)
+                seen_ids.add(wl_id)
+
+        total_symbols = len(all_items)
+        successful = 0
+        no_data = 0
+        total_bars = 0
+
+        for item in all_items:
+            symbol = item['symbol']
+            full_id = item.get('id')
+            if not full_id:
+                continue
+
+            # Get last processed timestamp (DELTA)   ←←← PASTE HERE
+            cur_prog.execute("SELECT last_ts FROM symbol_progress WHERE symbol=?", (symbol,))
+            row = cur_prog.fetchone()
+            last_ts = row[0] if row else None
+            
+            if isinstance(last_ts, str):
+                last_ts = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
+            
+            current_from = int(last_ts.timestamp()) + 60 if last_ts else from_time
+
+            logging.debug(f"{'Delta' if last_ts else 'Full'} backfill for {symbol}...")
+
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historical_1min (
+                    symbol TEXT,
+                    timestamp DATETIME,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    oi REAL DEFAULT 0,
+                    PRIMARY KEY (symbol, timestamp)
+                )
+            ''')
+            conn.commit()
+
+            symbol_bars = 0
+            while current_from < to_time:
+                current_to = min(current_from + (30 * 24 * 3600), to_time)
+                params = {'id': full_id, 'interval': '1', 'from': current_from, 'to': current_to}
+
+                try:
+                    resp = self.session.rest.get("/api/mkt-data/chart/interval-data", params=params)
+                    if resp.get('s') == 'ok' and 'd' in resp and 'bars' in resp['d']:
+                        bars = resp['d']['bars']
+                        if bars:
+                            data = []
+                            for bar in bars:
+                                ts = datetime.fromtimestamp(bar[0] / 1000, tz=ist)
+                                oi = bar[6] if len(bar) > 6 else 0
+                                data.append((symbol, ts, bar[1], bar[2], bar[3], bar[4], bar[5], oi))
+
+                            cursor.executemany('''
+                                INSERT OR IGNORE INTO historical_1min 
+                                (symbol, timestamp, open, high, low, close, volume, oi)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', data)
+                            conn.commit()
+
+                            symbol_bars += len(bars)
+                            total_bars += len(bars)
+                except Exception as e:
+                    logging.debug(f"Chunk failed for {symbol}: {e}")
+
+                current_from = current_to + 1
+
+            conn.close()
+
+            # Update progress
+            if symbol_bars > 0:
+                cur = conn_prog.cursor()
+                cur.execute("SELECT MAX(timestamp) FROM historical_1min WHERE symbol=?", (symbol,))
+                max_ts_row = cur.fetchone()
+                if max_ts_row and max_ts_row[0]:
+                    cur_prog.execute(
+                        "INSERT OR REPLACE INTO symbol_progress (symbol, last_ts) VALUES (?, ?)",
+                        (symbol, max_ts_row[0])
+                    )
+                    conn_prog.commit()
+                successful += 1
+            else:
+                no_data += 1
+
+        conn_prog.close()
+        logging.getLogger().setLevel(original_level)
+
+        logging.info("-" * 60)
+        logging.info("Historical Backfill Summary (DELTA):")
+        logging.info(f"Total symbols processed: {total_symbols}")
+        logging.info(f"Symbols with new data: {successful}")
+        logging.info(f"Symbols with no new data: {no_data}")
+        logging.info(f"Total NEW 1-min bars loaded: {total_bars}")
+        logging.info("-" * 60)
+        logging.info("All historical backfill (delta) done")
+
     def load_historical_symbols(self):
         historical_file = 'historical_symbols.json'
             
@@ -892,8 +1051,12 @@ class MarketData(BaseModule):
             return default_symbols
         
         else:
-            with open(historical_file, 'r') as f:
-                loaded = json.load(f)
+            try:
+                with open(historical_file, 'r') as f:
+                    loaded = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load historical_symbols.json: {e}. Using empty list.")
+                loaded = []
             
             # NEW: Filter to valid symbols only (e.g., those with proper 'id' containing '_BSE' or '_BFO')
             valid_symbols = [
@@ -913,162 +1076,6 @@ class MarketData(BaseModule):
                 logging.warning(f"Skipped {len(loaded) - len(valid_symbols)} invalid symbols (missing or malformed 'id')")
             
             return valid_symbols
-
-    def load_historical_candles(self):
-        # Silence detailed logging inside this method (only keep start and final summary)
-        original_level = logging.getLogger().level
-        logging.getLogger().setLevel(logging.WARNING)  # Suppress INFO/DEBUG during fetch
-
-        ist = timezone('Asia/Kolkata')
-        now = datetime.now(ist)
-        
-        market_start = now - timedelta(days=200)
-        market_start = market_start.replace(hour=9, minute=15, second=0, microsecond=0)
-        from_time = int(market_start.timestamp())
-        to_time = int(now.timestamp())
-        
-        logging.info(f"Backfilling historical 1min candles for ~6 months")  # Keep this visible
-        logging.debug(f"From: {market_start} ({from_time})")
-        logging.debug(f"To:   {now} ({to_time})")
-        
-        historical_items = self.load_historical_symbols()
-        if not historical_items:
-            logging.debug("No historical symbols to process")
-            logging.getLogger().setLevel(original_level)  # Restore
-            return
-        
-        # NEW: Merge unique watchlist items (use 'id' or construct if missing)
-        watchlist_items = self.watchlist  # From _load_watchlist (called earlier)
-        all_items = historical_items.copy()  # Start with historical
-        seen_ids = {item['id'] for item in all_items if 'id' in item}
-        
-        for wl_item in watchlist_items:
-            wl_id = wl_item.get('id')
-            if not wl_id:
-                # Construct if missing (from symbol or other fields)
-                expiry_str = wl_item.get('expiry', 'UNKNOWN')
-                strike = wl_item.get('strike', '')
-                opt_type = wl_item.get('type', '')
-                wl_id = f"OPTIDX_SENSEX_BFO_{expiry_str}_{strike}_{opt_type}"
-                wl_item['id'] = wl_id  # Add to dict for consistency
-            
-            if wl_id not in seen_ids:
-                all_items.append(wl_item)
-                seen_ids.add(wl_id)
-        
-        total_symbols = len(all_items)
-        successful_symbols = 0
-        no_data_symbols = 0
-        total_bars = 0
-        
-        for item in all_items:
-            symbol = item['symbol']
-            full_id = item.get('id')
-            if not full_id:
-                logging.debug(f"No 'id' for {symbol} — skipping")
-                continue
-            
-            logging.debug(f"Pulling historical 1min for {symbol} ({full_id})")
-            
-            db_path = 'mono_engine_data.db'
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historical_1min (
-                    symbol TEXT,
-                    timestamp DATETIME,
-                    open REAL,
-                    high REAL,
-                    low REAL,
-                    close REAL,
-                    volume REAL,
-                    oi REAL DEFAULT 0,
-                    PRIMARY KEY (symbol, timestamp)
-                )
-            ''')
-            conn.commit()
-            
-            current_from = from_time
-            symbol_bars = 0
-            
-            while current_from < to_time:
-                current_to = min(current_from + (30 * 24 * 3600), to_time)
-                
-                params = {
-                    'id': full_id,
-                    'interval': '1',
-                    'from': current_from,
-                    'to': current_to
-                }
-                
-                try:
-                    response = self.session.rest.get("/api/mkt-data/chart/interval-data", params=params)
-                    status = response.get('s', 'unknown')
-                    logging.debug(f"Chunk response: {status}")
-                    
-                    if status == 'ok' and 'd' in response and 'bars' in response['d']:
-                        bars = response['d']['bars']
-                        bars_count = len(bars)
-                        logging.debug(f"Loaded {bars_count} bars in chunk")
-                        
-                        if bars:
-                            data = []
-                            for bar in bars:
-                                ts_ms = bar[0]
-                                ts = datetime.fromtimestamp(ts_ms / 1000, tz=ist)
-                                oi = bar[6] if len(bar) > 6 else 0
-                                data.append((symbol, ts, bar[1], bar[2], bar[3], bar[4], bar[5], oi))
-                            
-                            cursor.executemany('''
-                                INSERT OR IGNORE INTO historical_1min
-                                (symbol, timestamp, open, high, low, close, volume, oi)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            ''', data)
-                            conn.commit()
-                            
-                            df_chunk = pd.DataFrame(data, columns=['symbol', 'timestamp', 'open', 'high', 'low', 'close', 'volume', 'oi'])
-                            df_chunk.set_index('timestamp', inplace=True)
-                            df_chunk.drop(columns=['symbol'], inplace=True)
-                            df_chunk = df_chunk.astype(float, errors='ignore')
-                            
-                            if '1min' not in self.candles[symbol]:
-                                self.candles[symbol]['1min'] = df_chunk
-                            else:
-                                self.candles[symbol]['1min'] = pd.concat([self.candles[symbol]['1min'], df_chunk]).sort_index()
-                            
-                            logging.debug(f"Chunk saved to DB + memory ({bars_count} bars)")
-                            symbol_bars += bars_count
-                            total_bars += bars_count
-                    
-                    else:
-                        logging.debug(f"No data: {response.get('msg', response)}")
-                
-                except Exception as e:
-                    logging.error(f"Chunk failed for {symbol}: {str(e)}")
-                
-                current_from = current_to + 1
-            
-            conn.close()
-            logging.debug(f"Completed historical for {symbol} (DB connection closed)")
-            
-            if symbol_bars > 0:
-                successful_symbols += 1
-            else:
-                no_data_symbols += 1
-        
-        # Restore logging level BEFORE summary
-        logging.getLogger().setLevel(original_level)
-        
-        # Final summary (this stays visible)
-        logging.info("-" * 60)
-        logging.info("Historical Backfill Summary:")
-        logging.info(f"Total symbols processed: {total_symbols}")
-        logging.info(f"Symbols with data fetched: {successful_symbols}")
-        logging.info(f"Symbols with no data: {no_data_symbols}")
-        logging.info(f"Total 1-min bars loaded: {total_bars}")
-        logging.info("-" * 60)
-        logging.info("All historical backfill done")
     
     def populate_historical_ce_pe(self, days_back=60):  # Start with 60 days (~2 months)
         """

@@ -67,12 +67,40 @@ class SensexOptions:
                         }
 
     def _load_watchlist(self):
-        if os.path.exists(self.watchlist_file):
-            with open(self.watchlist_file, 'r') as f:
-                self.watchlist = json.load(f)
-            logging.debug(f"Loaded {len(self.watchlist)} items from watchlist.json")
+        watchlist_file = 'watchlist.json'
+
+        if os.path.exists(watchlist_file):
+            try:
+                with open(watchlist_file, 'r') as f:
+                    loaded = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load watchlist.json: {e}. Starting with empty watchlist.")
+                loaded = []
+            
+            # Deduplicate by token
+            seen = set()
+            self.watchlist = []
+            for item in loaded:
+                token = item.get('token')
+                if token and token not in seen:
+                    seen.add(token)
+                    self.watchlist.append(item)
+            
+            logging.info(f"Loaded {len(self.watchlist)} UNIQUE items from watchlist.json")
+            logging.warning(f"Skipped {len(loaded) - len(self.watchlist)} items (missing or duplicate token)")
+
+            # Build selected_symbols
+            self.selected_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
+            if hasattr(self, 'sensex_spot_token') and self.sensex_spot_token:
+                spot_sym = f"{self.sensex_spot_token}_BSE"
+                self.selected_symbols.append(spot_sym)
+
+            # Subscribe (this was missing in the safe version)
+            self._subscribe_watchlist_options()
         else:
             self.watchlist = []
+            self.selected_symbols = []
+            logging.info("No watchlist.json found — starting empty")
 
     def _save_watchlist(self):
         with open(self.watchlist_file, 'w') as f:

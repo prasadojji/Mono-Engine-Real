@@ -110,17 +110,32 @@ class StrategyModule(BaseModule):
 
     def _check_and_publish_signals(self, symbol: str):
         strategy = self._get_or_create_strategy(symbol)
-        enter, price = strategy.should_enter()
+        
+        # FIXED: Safe unpacking - now handles 2 or 3 return values from should_enter()
+        result = strategy.should_enter()
+        if isinstance(result, tuple):
+            if len(result) == 3:
+                enter, price, reason = result
+            else:
+                enter, price = result
+                reason = 'unknown'
+        else:
+            enter = result
+            price = None
+            reason = 'unknown'
+
         if enter:
             subscribed_symbol = symbol  # already token_BFO
             self.events.publish('buy_signal', {
                 'price': price or 0.0,
                 'symbol': symbol,
                 'subscribed_symbol': subscribed_symbol,
-                'quantity': 900
+                'quantity': 900,
+                'buy_reason': reason   # ← Added for PnLModule
             })
-            self.logger.info(f"{strategy.__class__.__name__} BUY SIGNAL for {symbol} at {price}")
+            self.logger.info(f"{strategy.__class__.__name__} BUY SIGNAL for {symbol} at {price} | Reason: {reason}")
 
+        # should_exit remains unchanged (still returns 2 values)
         exit_, price = strategy.should_exit()
         if exit_:
             self.events.publish('sell_signal', {

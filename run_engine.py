@@ -130,6 +130,21 @@ if engine.login():
     engine.events.subscribe('buy_signal', handle_buy_signal)
     logging.info("✅ buy_signal handler registered (PaperTrading compatible)")
 
+    logging.info("✅ buy_signal handler registered (PaperTrading compatible)")
+    
+    # ======================
+    # HISTORICAL PNL REPLAY (NEW)
+    # ======================
+    print("\n" + "="*80)
+    run_hist = input("Run Historical PnL Replay now (delta mode)? (y/n): ").strip().lower()
+    print("="*80)
+    
+    if run_hist == 'y':
+        from mono_engine.modules.historical_backtest import HistoricalBacktest
+        print("🚀 Starting Delta Historical PnL Replay...")
+        HistoricalBacktest(engine).run()
+        print("✅ Historical PnL Replay Finished!")
+    
     # Main loop
     logging.info("Engine running — press Ctrl+C to stop")
     while True:

@@ -356,105 +356,111 @@ class Buy_AFL_python(BaseStrategy):
                     reasons.append(col)
             print(f"Buy signal triggered by: {', '.join(reasons)}")
 
-    def should_enter(self) -> Tuple[bool, float | None]:
+    def should_enter(self) -> Tuple[bool, float | None, str]:
+        """Return (enter_signal, price, buy_reason) for PnL tracking"""
         if len(self.resampled_df) < 2:
-            return False, None
+            return False, None, 'unknown'
+
         current_ma1 = self.resampled_df['MA1'].iloc[-1]
-        prev_ma1 = self.resampled_df['MA1'].iloc[-2]
+        prev_ma1   = self.resampled_df['MA1'].iloc[-2]
+
         if current_ma1 and not prev_ma1:
-            # Suggested price from AFL: Max(PreFiveMinHigh, Open) — but since resampled, use latest High as approx
-            price = self.resampled_df['High'].iloc[-1]
-            return True, price
-        return False, None
+            reason = self._get_buy_reason()
+            price  = self.resampled_df['High'].iloc[-1]
+            return True, price, reason
+
+        return False, None, 'unknown'
+
+
+    def _get_buy_reason(self) -> str:
+        """Returns exact trigger name(s) — used by PnL for per-reason win-rate"""
+        df = self.resampled_df
+        reasons = []
+        trigger_cols = [col for col in df.columns 
+                        if col.startswith(('BB', 'CBB', 'CBBR', 'NRCB', 'Green'))]
+
+        for col in trigger_cols:
+            if df[col].iloc[-1]:          # signal is True on latest bar
+                reasons.append(col)
+
+        return ', '.join(reasons) if reasons else 'MA1'
+
 
     def should_exit(self) -> Tuple[bool, float | None]:
         return False, None
+
 
     def reset_day(self):
         self.base_df = pd.DataFrame()
         self.resampled_df = pd.DataFrame()
 
-# Standalone test
+
+# =============================================================================
+# Standalone test (UPDATED to use new should_enter signature)
+# =============================================================================
 if __name__ == "__main__":
     import sqlite3
     import json
-    from tabulate import tabulate  # For table output
+    from tabulate import tabulate
+    import os
 
-    # Load watchlist from root
-    watchlist_path = 'watchlist.json'  # Relative to C:\MoNo_Engine
+    # Load watchlist
+    watchlist_path = 'watchlist.json'
     if not os.path.exists(watchlist_path):
-        print(f"watchlist.json not found at {watchlist_path}—skipping.")
+        print(f"watchlist.json not found at {watchlist_path} — skipping.")
     else:
         with open(watchlist_path, 'r') as f:
             watchlist = json.load(f)
-        # print(f"Loaded {len(watchlist)} items from watchlist.json")  # Comment out for clean summary
 
-        # List to collect all buy signals
         signals = []
-
-        # For each item in watchlist, load historical data by symbol (adjust if symbol format differs)
         db_path = 'mono_engine_data.db'
         conn = sqlite3.connect(db_path)
 
         for item in watchlist:
-            symbol = item.get('id', item.get('symbol'))  # Use 'id' or 'symbol' key from JSON
-            token = item.get('token')
+            symbol = item.get('id', item.get('symbol'))
             if not symbol:
-                # print(f"Skipping item without symbol: {item}")  # Comment out
                 continue
 
-            # print(f"\nProcessing symbol: {symbol} (token: {token})")  # Comment out
-
             df = pd.read_sql(f"""
-                SELECT timestamp as ts, open as Open, high as High, low as Low, close as Close, volume as Volume 
+                SELECT timestamp as ts, open as Open, high as High, low as Low, 
+                       close as Close, volume as Volume 
                 FROM historical_1min 
                 WHERE symbol = '{symbol}'
                 ORDER BY timestamp
             """, conn, parse_dates=['ts'], index_col='ts')
 
             if df.empty:
-                # print(f"No data for {symbol}—skipping.")  # Comment out
                 continue
 
-            # print(f"Loaded {len(df)} 1-min bars for {symbol}.")  # Comment out
-
             strategy = Buy_AFL_python()
-            strategy.debug = False  # Disable inline prints; collect reasons in signals
+            strategy.debug = False
 
             batch_size = 20
             for i in range(0, len(df), batch_size):
-                batch = df.iloc[i:i+batch_size]
-                # print("\n--- Feeding batch for {symbol} ---".format(symbol=symbol))  # Comment out
+                batch = df.iloc[i:i + batch_size]
                 strategy.on_data_update({'1min': batch})
-                
-                enter, price = strategy.should_enter()
+
+                # === UPDATED CALL (now returns 3 values) ===
+                enter, price, reason = strategy.should_enter()
+
                 if enter:
-                    # Collect reasons
-                    reasons = []
-                    bb_cols = [col for col in strategy.resampled_df.columns if col.startswith('BB')]
-                    cbb_cols = [col for col in strategy.resampled_df.columns if col.startswith('CBB')]
-                    cbbr_cols = [col for col in strategy.resampled_df.columns if col.startswith('CBBR')]
-                    for col in bb_cols + cbb_cols + cbbr_cols:
-                        if strategy.resampled_df[col].iloc[-1]:
-                            reasons.append(col)
-                    reason_str = ', '.join(reasons) if reasons else 'Unknown'
                     signals.append({
                         'Time': batch.index[-1],
                         'Symbol': symbol,
-                        'Buy Trigger Price': price,
-                        'Buy Reason': reason_str
+                        'Buy Trigger Price': round(price, 2),
+                        'Buy Reason': reason
                     })
-                    # Do NOT print here—save for summary
 
         conn.close()
 
-        # Print summary table if any signals (sorted descending by Time)
+        # Final summary table
         if signals:
             signals_df = pd.DataFrame(signals)
             signals_df = signals_df.sort_values('Time', ascending=False).reset_index(drop=True)
-            signals_df.insert(0, 'SNo', range(1, len(signals_df) + 1))  # Add SNo column
+            signals_df.insert(0, 'SNo', range(1, len(signals_df) + 1))
+            print("\n" + "="*100)
+            print("HISTORICAL BUY SIGNALS WITH REASONS")
+            print("="*100)
             print(tabulate(signals_df, headers='keys', tablefmt='grid', showindex=False))
         else:
             print("No buy signals detected in the historical data.")
-
-        # print("Historical test with watchlist complete!")  # Optional, can remove for just table
