@@ -1,21 +1,17 @@
-# mono_engine/modules/historical_backtest.py
 """
-Historical Backtest - Final Version (Fixed Sell Signals)
-- Reads primarily from historical_symbols.json
-- Auto-appends watchlist symbols
-- NEVER touches watchlist.json
-- Now forces sell signal detection + logging
-- Builds proper table with Sell Time, Sell Price, PnL%, Buy Reason, Sell Reason
+Historical Backtest - PURE SINGLE SYMBOL (Final Version with your requests)
+- Quantity = 900 contracts (as requested)
+- Total Contracts note (900 contracts = 45 lots of 20)
+- Per-buy-reason profit/loss summary at the end
+- Full date + time + Buy Reason
 """
 
 import logging
 import sqlite3
 import pandas as pd
-import json
-import os
-from tabulate import tabulate
 from datetime import datetime
-
+from tabulate import tabulate
+from collections import defaultdict
 from .base import BaseModule
 
 
@@ -23,7 +19,9 @@ class HistoricalBacktest(BaseModule):
     def __init__(self, engine):
         super().__init__(engine)
         self.logger = logging.getLogger(__name__)
-        self.trades = []  # Final table rows
+        self.trades = []
+        self.symbol = "SENSEX 05MAR 81200 PE"   # ← Change here if needed
+        self.current_buy_reason = "unknown"
 
     def start(self):
         self.run()
@@ -33,111 +31,168 @@ class HistoricalBacktest(BaseModule):
 
     def run(self):
         self.logger.info("=" * 100)
-        self.logger.info("🚀 STARTING HISTORICAL BACKTEST (Fixed Sell Signals)")
+        self.logger.info("🚀 HISTORICAL BACKTEST — PURE SINGLE SYMBOL MODE")
+        self.logger.info(f"Symbol: {self.symbol}")
+        self.logger.info("Real stoploss + forced sell safety at bar 500")
         self.logger.info("=" * 100)
 
-        market_data = self.engine.modules.get('market_data')
         state_module = self.engine.modules.get('state')
         strategy_module = self.engine.modules.get('strategy')
-        stoploss_module = self.engine.modules.get('stoploss')
-
-        if not all([market_data, strategy_module, stoploss_module]):
-            self.logger.error("Missing required modules for backtest")
-            return
 
         db_path = 'mono_engine_data.db'
-        historical_file = 'historical_symbols.json'
 
-        # Load symbols primarily from historical_symbols.json
-        symbols = []
-        if os.path.exists(historical_file):
-            try:
-                with open(historical_file, 'r') as f:
-                    hist_data = json.load(f)
-                symbols = [item['symbol'] for item in hist_data if item.get('symbol')]
-            except Exception as e:
-                self.logger.warning(f"Could not load historical_symbols.json: {e}")
+        # ====================== LISTENERS ======================
+        def on_buy_signal(data):
+            if data.get('symbol') != self.symbol:
+                return
+            price = data.get('price')
+            self.current_buy_reason = data.get('buy_reason', 'unknown')
+            dummy_id = f"HIS-B-{int(datetime.now().timestamp())}"
+            self.logger.info(f"BUY SIGNAL → {self.symbol} @ {price:.2f} | Reason: {self.current_buy_reason}")
 
-        # Auto-append missing watchlist symbols
-        watchlist_symbols = [item['symbol'] for item in market_data.watchlist]
-        added = 0
-        for sym in watchlist_symbols:
-            if sym not in symbols:
-                symbols.append(sym)
-                added += 1
+            fill_data = {
+                'order_id': dummy_id,
+                'scrip': self.symbol,
+                'order_type': 'buy',
+                'price': price,
+                'quantity': 900,                    # Fixed 900 contracts
+                'fill_time': datetime.now()
+            }
+            self.engine.events.publish('order_filled', fill_data)
 
-        if added > 0:
-            self.logger.info(f"Appended {added} watchlist symbols to historical_symbols.json")
+        def on_exit_signal(data):
+            if data.get('symbol') != self.symbol:
+                return
+            exit_price = data.get('exit_price')
+            reason = data.get('reason', 'unknown')
+            dummy_id = f"HIS-S-{int(datetime.now().timestamp())}"
+            self.logger.info(f"EXIT SIGNAL → {self.symbol} @ {exit_price:.2f} | Reason: {reason}")
 
-        symbols.append('SENSEX_SPOT')
+            entry = state_module.get_entry_details(self.symbol)
+            if entry:
+                pnl_pct = round((exit_price - entry.price) / entry.price * 100, 2)
+                trade = {
+                    'Entry Time': entry.time.strftime('%Y-%m-%d %H:%M'),
+                    'Entry Price': entry.price,
+                    'Exit Time': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                    'Exit Price': exit_price,
+                    'Quantity': 900,                    # 900 contracts
+                    'Buy Reason': self.current_buy_reason,
+                    'Exit Reason': reason,
+                    'PnL %': pnl_pct
+                }
+                self.trades.append(trade)
+                self.logger.info(f"TRADE RECORDED | Buy Reason: {self.current_buy_reason} | PnL: {pnl_pct}%")
 
-        total_trades = 0
+            fill_data = {
+                'order_id': dummy_id,
+                'scrip': self.symbol,
+                'order_type': 'sell',
+                'price': exit_price,
+                'quantity': 900,
+                'fill_time': datetime.now()
+            }
+            self.engine.events.publish('order_filled', fill_data)
 
-        for symbol in symbols:
-            try:
-                conn = sqlite3.connect(db_path)
-                df = pd.read_sql(f"""
-                    SELECT timestamp as ts, open, high, low, close, volume
-                    FROM historical_1min
-                    WHERE symbol = '{symbol}'
-                    ORDER BY timestamp
-                """, conn, parse_dates=['ts'], index_col='ts')
-                conn.close()
+        self.events.subscribe('buy_signal', on_buy_signal)
+        self.events.subscribe('exit_signal', on_exit_signal)
 
-                if df.empty:
-                    self.logger.warning(f"No data in DB for {symbol} — skipping")
-                    continue
+        # ====================== LOAD & REPLAY ======================
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql(f"""
+            SELECT timestamp as ts, open, high, low, close, volume
+            FROM historical_1min
+            WHERE symbol = '{self.symbol}'
+            ORDER BY timestamp
+        """, conn, parse_dates=['ts'], index_col='ts')
+        conn.close()
 
-                self.logger.info(f"Replaying {len(df)} bars for {symbol}...")
+        if df.empty:
+            self.logger.error(f"No data found for {self.symbol}!")
+            return
 
-                df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low',
-                                      'close': 'Close', 'volume': 'Volume'})
+        self.logger.info(f"Replaying {len(df)} bars for {self.symbol}...")
+        df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low',
+                                'close': 'Close', 'volume': 'Volume'})
 
-                # Reset state
-                if symbol in state_module.states:
-                    state_module.states[symbol].update(in_trade=False)
-                if symbol in strategy_module.strategies:
-                    strategy_module.strategies[symbol].reset_day()
+        if self.symbol in strategy_module.strategies:
+            strategy_module.strategies[self.symbol].reset_day()
+        if self.symbol in state_module.states:
+            state_module.states[self.symbol].update(in_trade=False)
 
-                for ts, row in df.iterrows():
-                    bar_data = {
-                        'symbol': symbol,
-                        'bar': {
-                            'ts': ts,
-                            'open': float(row['Open']),
-                            'high': float(row['High']),
-                            'low': float(row['Low']),
-                            'close': float(row['Close']),
-                            'volume': int(row['Volume'])
-                        }
-                    }
+        strategy = strategy_module._get_or_create_strategy(self.symbol)
 
-                    strategy = strategy_module._get_or_create_strategy(symbol)
-                    strategy.on_data_update({'1min': df.loc[:ts].tail(100)})
+        for i, (ts, row) in enumerate(df.iterrows()):
+            strategy.on_data_update({'1min': df.loc[:ts].tail(100)})
 
-                    # Call stoploss (your original call)
-                    stoploss_module._on_1min_bar_closed(bar_data)
+            enter, price, reason = strategy.should_enter() if hasattr(strategy, 'should_enter') else (False, None, '')
+            if enter:
+                self.engine.events.publish('buy_signal', {
+                    'price': price or 0.0,
+                    'symbol': self.symbol,
+                    'quantity': 900,
+                    'buy_reason': reason
+                })
 
-                    # === FORCED SELL CHECK (this will now show sell signals) ===
-                    exit_, price = strategy.should_exit()
-                    if exit_:
-                        sell_reason = "Stoploss / AFL Exit"
-                        self.logger.info(f"SELL SIGNAL → {symbol} @ {price:.2f} | Reason: {sell_reason}")
-                        # You can record trade here if needed
+            bar_data = {
+                'symbol': self.symbol,
+                'bar': {
+                    'ts': ts,
+                    'open': float(row['Open']),
+                    'high': float(row['High']),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                    'volume': int(row['Volume'])
+                }
+            }
+            self.engine.events.publish('1min_bar_closed', bar_data)
 
-                total_trades += len(getattr(state_module.states.get(symbol), 'trade_history', []))
+            if i == 500 and state_module.is_in_trade(self.symbol):
+                self.logger.info(f"FORCING SELL at bar 500 @ {row['Close']:.2f}")
+                self.engine.events.publish('exit_signal', {
+                    'symbol': self.symbol,
+                    'exit_price': row['Close'],
+                    'reason': 'FORCED_AFTER_500_BARS',
+                    'time': ts,
+                    'quantity': 900
+                })
 
-            except Exception as e:
-                self.logger.error(f"Error processing {symbol}: {e}")
+        # Cleanup
+        self.events.unsubscribe('buy_signal', on_buy_signal)
+        self.events.unsubscribe('exit_signal', on_exit_signal)
 
+        # ====================== FINAL TABLE + SUMMARY ======================
         self.logger.info("=" * 100)
-        self.logger.info(f"✅ HISTORICAL BACKTEST COMPLETED")
-        self.logger.info(f"Total symbols processed : {len(symbols)}")
-        self.logger.info(f"Total trades simulated   : {total_trades}")
+        self.logger.info("✅ SINGLE SYMBOL BACKTEST COMPLETED")
         self.logger.info("=" * 100)
 
         if self.trades:
-            print("\nHistorical Trades:")
+            print("\nHistorical Trades (Single Symbol):")
             print(tabulate(self.trades, headers="keys", tablefmt="grid"))
+
+            # Cumulative PnL
+            total_pnl = sum(t['PnL %'] for t in self.trades)
+            print(f"\n{'='*90}")
+            print(f"TOTAL CONTRACTS TRADED : 900")
+            print(f"CUMULATIVE P&L FOR ALL TRADES = {total_pnl:.2f}%")
+            print(f"{'='*90}")
+
+            # === Per Buy Reason Summary (Profit / Loss) ===
+            reason_summary = defaultdict(lambda: {"trades": 0, "profit": 0.0, "loss": 0.0})
+            for t in self.trades:
+                r = t['Buy Reason']
+                reason_summary[r]["trades"] += 1
+                if t['PnL %'] > 0:
+                    reason_summary[r]["profit"] += t['PnL %']
+                else:
+                    reason_summary[r]["loss"] += t['PnL %']
+
+            print("\nPER BUY REASON SUMMARY (Profit / Loss)")
+            print(f"{'Buy Reason':<40} {'Trades':<8} {'Profit %':<12} {'Loss %':<12} {'Net %':<10}")
+            print("-" * 85)
+            for r, s in reason_summary.items():
+                net = s["profit"] + s["loss"]
+                print(f"{r:<40} {s['trades']:<8} {s['profit']:>10.2f} {s['loss']:>12.2f} {net:>10.2f}")
+            print("-" * 85)
         else:
-            self.logger.info("No trades were recorded during backtest.")
+            self.logger.warning("No trades recorded")

@@ -96,7 +96,7 @@ class SensexOptions:
                 self.selected_symbols.append(spot_sym)
 
             # Subscribe (this was missing in the safe version)
-            self._subscribe_watchlist_options()
+            #self._subscribe_watchlist_options()
         else:
             self.watchlist = []
             self.selected_symbols = []

@@ -84,6 +84,7 @@ class StrategyModule(BaseModule):
 
         if data['current_time'] is None or minute_ts > data['current_time']:
             # New bar — push previous complete bar to strategy
+            # New bar — push previous complete bar to strategy
             if data['current_time'] is not None:
                 df_1min = pd.DataFrame([{
                     'Open': data['open'],
@@ -92,10 +93,26 @@ class StrategyModule(BaseModule):
                     'Close': data['close'],
                     'Volume': data['volume']
                 }], index=[data['current_time']])
+                
                 strategy = self._get_or_create_strategy(symbol)
                 strategy.on_data_update({'1min': df_1min})
+                
+                # === CRITICAL FIX: Publish 1min_bar_closed so StoplossModule runs ===
+                bar_data = {
+                    'symbol': symbol,
+                    'bar': {
+                        'ts': data['current_time'],
+                        'open': float(data['open']),
+                        'high': float(data['high']),
+                        'low': float(data['low']),
+                        'close': float(data['close']),
+                        'volume': int(data['volume'])
+                    }
+                }
+                self.events.publish('1min_bar_closed', bar_data)
+                
                 self._check_and_publish_signals(symbol)
-                self.logger.debug(f"Fed 1min candle to {symbol} at {data['current_time']}, Close={df_1min['Close'].iloc[0]}")
+                self.logger.debug(f"Fed 1min candle + published '1min_bar_closed' for {symbol} @ {data['current_time']}")
 
             # Start new bar
             data['open'] = data['high'] = data['low'] = data['close'] = ltp
