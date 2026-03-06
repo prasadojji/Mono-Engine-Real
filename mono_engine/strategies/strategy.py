@@ -24,8 +24,9 @@ class StrategyModule(BaseModule):
         # Use Buy_AFL_python
         self.strategy_class = Buy_AFL_python
         
-        # Configurable base timeframe
-        self.base_timeframe = self.engine.config.get('strategy_params', {}).get('base_timeframe', '5min')
+        # Configurable base timeframe - use 1min for historical backtests
+        default_timeframe = '1min' if getattr(self.engine, 'mode', None) == 'historical' else '5min'
+        self.base_timeframe = self.engine.config.get('strategy_params', {}).get('base_timeframe', default_timeframe)
         self.logger.info(f"Using base timeframe: {self.base_timeframe}")
         
         # Per-symbol strategy instances
@@ -142,23 +143,26 @@ class StrategyModule(BaseModule):
             reason = 'unknown'
 
         if enter:
+            # Use quantity from stoploss config
+            qty = self.engine.config.get('stoploss_params', {}).get('quantity', 45)
             subscribed_symbol = symbol  # already token_BFO
             self.events.publish('buy_signal', {
                 'price': price or 0.0,
                 'symbol': symbol,
                 'subscribed_symbol': subscribed_symbol,
-                'quantity': 900,
+                'quantity': qty,
                 'buy_reason': reason   # ← Added for PnLModule
             })
-            self.logger.info(f"{strategy.__class__.__name__} BUY SIGNAL for {symbol} at {price} | Reason: {reason}")
+            self.logger.info(f"{strategy.__class__.__name__} BUY SIGNAL for {symbol} at {price} | Reason: {reason} | Qty: {qty}")
 
         # should_exit remains unchanged (still returns 2 values)
         exit_, price = strategy.should_exit()
         if exit_:
-            self.events.publish('sell_signal', {
-                'price': price or 0.0,
+            self.events.publish('exit_signal', {
+                'exit_price': price or 0.0,
                 'symbol': symbol,
                 'subscribed_symbol': symbol,
-                'quantity': 900
+                'quantity': 900,
+                'reason': 'strategy_exit'  # Add reason for consistency
             })
-            self.logger.info(f"{strategy.__class__.__name__} SELL SIGNAL for {symbol} at {price}")
+            self.logger.info(f"{strategy.__class__.__name__} EXIT SIGNAL for {symbol} at {price}")

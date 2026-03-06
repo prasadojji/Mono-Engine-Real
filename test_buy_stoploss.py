@@ -7,6 +7,7 @@ from collections import defaultdict
 from tabulate import tabulate  # pip install tabulate if needed
 import json
 import re  # For parsing description
+from mono_engine.modules.stoploss import StoplossModule
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -89,8 +90,8 @@ for symbol, db_symbol, expiry, date_str, buy_price in parsed_entries:
         mock_engine = MockEngine(config)
         stoploss = StoplossModule(mock_engine)
 
-        # Subscribe to sell_signal
-        mock_engine.subscribe('sell_signal', on_sell_signal)
+        # Subscribe to exit_signal
+        mock_engine.subscribe('exit_signal', on_sell_signal)
 
         # Start position at buy
         entry_time = df_1min.index[0] if not df_1min.empty else datetime.strptime(date_str, '%Y-%m-%d')  # Use first available time
@@ -153,7 +154,7 @@ for symbol, db_symbol, expiry, date_str, buy_price in parsed_entries:
 conn.close()
 
 # Sort by date descending
-trades.sort(key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d %H:%M:%S'), ascending=False)
+trades.sort(key=lambda x: datetime.strptime(x['date'], '%Y-%m-%d %H:%M:%S'), reverse=True)
 
 # Output grid
 if trades:

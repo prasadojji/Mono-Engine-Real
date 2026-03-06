@@ -111,7 +111,7 @@ class Order(BaseModule):
         )
         if resp and resp.get('s') == 'ok':
             order_id = resp.get('d', {}).get('order_id')
-            self.pending_orders[order_id] = {'side': 'buy', 'quantity': quantity, 'filled': 0}
+            self.pending_orders[order_id] = {'side': 'buy', 'quantity': quantity, 'filled': 0, 'buy_reason': data.get('buy_reason', 'unknown')}
             self.events.publish('order_placed', {'order_id': order_id, 'side': 'buy', 'scrip': self.scrip})
 
     def _handle_sell_signal(self, data: Dict):
@@ -131,6 +131,7 @@ class Order(BaseModule):
         order_type = ORDER_TYPES.get(data.get('order_type', 'MARKET'), 'market')
         price = data.get('price')
         trigger_price = data.get('trigger_price', 0.0) if order_type.startswith('sl') else 0.0
+        sell_reason = data.get('sell_reason', 'unknown')
 
         resp = self.place_order(
             symbol=self.scrip,
@@ -140,11 +141,12 @@ class Order(BaseModule):
             price=price,
             trigger_price=trigger_price,
             product='nrml',
-            validity='day'
+            validity='day',
+            sell_reason=sell_reason
         )
         if resp and resp.get('s') == 'ok':
             order_id = resp.get('d', {}).get('order_id')
-            self.pending_orders[order_id] = {'side': 'sell', 'quantity': quantity, 'filled': 0}
+            self.pending_orders[order_id] = {'side': 'sell', 'quantity': quantity, 'filled': 0, 'sell_reason': sell_reason}
             self.events.publish('order_placed', {'order_id': order_id, 'side': 'sell', 'scrip': self.scrip})
 
     def _on_order_update(self, data: Dict):
@@ -179,6 +181,11 @@ class Order(BaseModule):
                     'quantity': self.pending_orders[order_id]['filled'] // self.lot_size,  # User-level qty
                     'fill_time': data.get('fill_time', datetime.now())
                 }
+                # Add reasons for orders
+                if self.pending_orders[order_id]['side'] == 'buy':
+                    fill_data['buy_reason'] = self.pending_orders[order_id].get('buy_reason', 'unknown')
+                elif self.pending_orders[order_id]['side'] == 'sell':
+                    fill_data['sell_reason'] = self.pending_orders[order_id].get('sell_reason', 'unknown')
                 self.events.publish('order_filled', fill_data)
                 del self.pending_orders[order_id]
                 self.logger.info(f"Order fully filled: {order_id}")
@@ -247,7 +254,7 @@ class Order(BaseModule):
             return None   
 
     def place_order(self, symbol, quantity, side, order_type="limit", price=None, trigger_price=0.0,
-                    product="delivery", validity="day", disclosed_qty=0, amo=False, remarks="MonoEngine"):
+                    product="delivery", validity="day", disclosed_qty=0, amo=False, remarks="MonoEngine", **kwargs):
         """
         Place a new order.
         Example: place_order("RELIANCE_EQ_NSE", 1, "buy", price=2900.0, amo=True)
@@ -279,6 +286,15 @@ class Order(BaseModule):
                 if status == "ok":
                     order_id = resp.get("d", {}).get('order_id', "Unknown")
                     self.logger.info(f"ORDER PLACED SUCCESSFULLY | ID: {order_id} | {side.upper()} {quantity} {symbol} @ {price or 'MKT'}")
+
+                    # Store order details for tracking
+                    order_details = {'side': side, 'quantity': quantity, 'filled': 0}
+                    if side == 'buy':
+                        order_details['buy_reason'] = kwargs.get('buy_reason', 'unknown')
+                    elif side == 'sell':
+                        order_details['sell_reason'] = kwargs.get('sell_reason', 'unknown')
+                    self.pending_orders[order_id] = order_details
+
                     return resp
                 else:
                     self.logger.error(f"ORDER REJECTED on attempt {attempt}: {resp}")

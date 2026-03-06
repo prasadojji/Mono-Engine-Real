@@ -6,7 +6,11 @@ This file makes 'strategies' a proper Python package.
 
 # Expose key classes for easier imports from outside the package
 from .base_strategy import BaseStrategy
-from .afl_strategy import AFLStrategy
+try:
+    from .afl_strategy import AFLStrategy
+except ImportError:
+    # matplotlib not available, skip AFLStrategy
+    pass
 from .strategy import StrategyModule
 import os
 print(os.listdir('mono_engine/strategies'))  # Lists files—check for 'Buy_AFL_python.py'

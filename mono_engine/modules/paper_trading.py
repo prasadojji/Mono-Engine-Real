@@ -29,10 +29,11 @@ Now fully compatible with multi-symbol StateModule and central buy_signal handle
 import logging
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 
 from .base import BaseModule
 from .order import Order
+from mono_engine.core.events import EVENT_TRADE
 
 
 class PaperTrading(Order):
@@ -42,13 +43,14 @@ class PaperTrading(Order):
         self.market_data = self.engine.modules.get('market_data')
 
     def start(self):
-        super().start()
-        # REMOVED: subscribe to buy_signal / sell_signal here
+        # Don't call super().start() - we don't subscribe to signals
         # (We use the central handler in run_engine.py instead)
+        # Subscribe only to order updates for simulation
+        self.events.subscribe('on_order_update', self._on_order_update)
         self.logger.info("PaperTrading started in simulation mode (central handler active)")
 
     def stop(self):
-        super().stop()
+        self.events.unsubscribe('on_order_update', self._on_order_update)
         self.logger.info("PaperTrading stopped")
 
     def place_order(self, symbol, quantity, side, order_type="limit", price=None, **kwargs):
@@ -64,11 +66,11 @@ class PaperTrading(Order):
                 self.logger.info(f"Not in trade for {symbol} — skipping sell")
                 return None
 
-        return self._simulate_fill(symbol, side, order_type, price, quantity)
+        return self._simulate_fill(symbol, side, order_type, price, quantity, **kwargs)
 
     def _simulate_fill(self, symbol: str, side: str, order_type: str, price: Optional[float] = None, quantity: int = 900, **kwargs):
-        """Fixed signature + real price from MarketData"""
-        real_price = self._get_real_price(symbol, price)
+        """Use signal price for entry, LTP for exit"""
+        real_price = price if price and price > 0 else self._get_real_price(symbol, 0.0)
 
         order_id = f"PAPER-{int(time.time())}"
         fill_time = datetime.now()
@@ -80,8 +82,13 @@ class PaperTrading(Order):
             'price': real_price,
             'quantity': quantity,
             'fill_time': fill_time,
-            'buy_reason': kwargs.get('buy_reason', 'unknown') if 'kwargs' in locals() else 'unknown'  # ← add this
         }
+
+        # Add buy_reason for buy orders, sell_reason for sell orders
+        if side.lower() == 'buy':
+            fill_data['buy_reason'] = kwargs.get('buy_reason', 'unknown')
+        elif side.lower() == 'sell':
+            fill_data['sell_reason'] = kwargs.get('sell_reason', 'unknown')
 
         self.events.publish('order_filled', fill_data)
         self.logger.info(f"✅ SIMULATED {side.upper()} FILL | {quantity} {symbol} @ {real_price:.2f} | ID: {order_id}")
@@ -130,15 +137,4 @@ class PaperTrading(Order):
 
     
 
-    def _handle_sell_signal(self, data: Dict):
-        if not self.engine.modules['state'].is_in_trade():
-            self.logger.warning("Not in_trade — ignoring sell signal")
-            return
-            
-        symbol = data.get('symbol', 'UNKNOWN')
-        subscribed_symbol = data.get('subscribed_symbol')
-        price = data.get('price', 0.0)
-        qty = data.get('quantity', PAPER_QTY)
-        
-        real_price = self._get_real_price(subscribed_symbol, price)
-        self._simulate_fill(symbol, 'sell', 'limit', real_price)
+

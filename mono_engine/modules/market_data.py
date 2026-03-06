@@ -24,8 +24,10 @@ from tabulate import tabulate
 from mono_engine.modules.base import BaseModule
 from mono_engine.core.events import EVENT_TICK, EVENT_CONNECT
 
-# NEW: For IST time checks
+        # NEW: For IST time checks
 from pytz import timezone  # Add this import; if not installed, use manual UTC+5:30 offset
+import threading
+import time
 
 # Files & Cache (relative to project root or config path)
 options_file = 'symbols_BSEOptions.csv'
@@ -131,6 +133,9 @@ class MarketData(BaseModule):
             json.dump(self.watchlist, f, indent=4)
         logging.info(f"Saved watchlist to {watchlist_file}")
 
+        # Auto-sync watchlist symbols to historical_symbols.json (append, not replace)
+        self._sync_watchlist_to_historical()
+
         # Force immediate subscription for real ticks/quotes
         option_symbols = [f"{item['token']}_BFO" for item in self.watchlist]
         if option_symbols:
@@ -138,9 +143,68 @@ class MarketData(BaseModule):
             #if hasattr(self.streamer, 'subscribeL1SnapShot'):
             #    self.streamer.subscribeL1SnapShot(option_symbols)
             logging.info(f"IMMEDIATE subscription L1 + Snapshot for options: {option_symbols}")
+
+    def _sync_watchlist_to_historical(self):
+        """Append new watchlist symbols to historical_symbols.json for backtesting"""
+        historical_file = 'historical_symbols.json'
+
+        # Load existing historical symbols
+        if os.path.exists(historical_file):
+            try:
+                with open(historical_file, 'r') as f:
+                    existing_symbols = json.load(f)
+            except Exception as e:
+                logging.error(f"Failed to load {historical_file}: {e}")
+                existing_symbols = []
+        else:
+            existing_symbols = []
+
+        # Get existing IDs to avoid duplicates
+        existing_ids = {item.get('id') for item in existing_symbols if item.get('id')}
+
+        # Add new watchlist items
+        added_count = 0
+        for item in self.watchlist:
+            # Generate ID if missing
+            item_id = item.get('id')
+            if not item_id:
+                expiry_str = item.get('expiry', 'UNKNOWN')
+                if hasattr(expiry_str, 'strftime'):  # datetime.date object
+                    expiry_str = expiry_str.strftime('%Y-%m-%d')
+                strike = item.get('strike', '')
+                opt_type = item.get('type', '')
+                item_id = f"OPTIDX_SENSEX_BFO_{expiry_str}_{strike}_{opt_type}"
+                item['id'] = item_id
+
+            # Only add if not already in historical_symbols.json
+            if item_id not in existing_ids:
+                # Create historical entry
+                hist_entry = {
+                    "symbol": item.get('symbol', item_id),
+                    "id": item_id,
+                    "type": item.get('type', 'option'),
+                    "expiry": expiry_str if expiry_str != 'UNKNOWN' else None,
+                    "strike": item.get('strike'),
+                    "description": f"Added from watchlist on {datetime.now().strftime('%Y-%m-%d')}"
+                }
+                existing_symbols.append(hist_entry)
+                existing_ids.add(item_id)
+                added_count += 1
+
+        # Save updated historical_symbols.json
+        if added_count > 0:
+            with open(historical_file, 'w') as f:
+                json.dump(existing_symbols, f, indent=4)
+            logging.info(f"Added {added_count} new symbols to {historical_file} from watchlist")
+        else:
+            logging.debug("No new symbols to add to historical_symbols.json")
        
     def start(self):
         logging.info("MarketData starting — SENSEX options workflow (as in sensex_day_open_strikes.py)")
+
+        # NEW: Check for day change and reset if needed
+        self._check_day_change()
+
         self.events.subscribe(EVENT_TICK, self._on_tick)
         self.events.subscribe(EVENT_CONNECT, self._on_connect)
         self._load_watchlist()  # Ensures subscription immediately
@@ -154,6 +218,9 @@ class MarketData(BaseModule):
             self.load_historical_candles()  # Load historical on start
         else:
             logging.warning("Spot token not set — skipping historical load")
+
+        # NEW: Start periodic refresh thread
+        self._start_periodic_refresh()
 
     def stop(self):
         self._save_watchlist()  # Save on stop
@@ -184,6 +251,12 @@ class MarketData(BaseModule):
             with open(cache_file, 'w') as f:
                 f.write(str(self.spot_open))
             logging.info(f"Captured SENSEX open from tick: {self.spot_open}")
+
+            # NEW: Detect market open and trigger fresh scrip proposal
+            if not self.market_opened_today:
+                self.market_opened_today = True
+                logging.info("Market open detected - triggering fresh scrip proposal")
+                self._run_fresh_scrip_proposal()
 
         # Display table (unchanged)
         if symbol in self.selected_symbols:
@@ -1165,3 +1238,174 @@ class MarketData(BaseModule):
         logging.getLogger().setLevel(original_level)
         
         logging.info("Manual ATM CE/PE population complete")  # Keep this visible too
+
+    def _check_day_change(self):
+        """Check if it's a new trading day and reset watchlist if needed."""
+        today = datetime.now().date()
+        if hasattr(self, 'last_processed_date') and self.last_processed_date != today:
+            logging.info(f"New trading day detected: {today} (previous: {self.last_processed_date})")
+            self._reset_watchlist_for_new_day()
+            # Reset market open flag for new day
+            self.market_opened_today = False
+        self.last_processed_date = today
+
+    def _reset_watchlist_for_new_day(self):
+        """Reset watchlist for new trading day."""
+        logging.info("Resetting watchlist for new trading day")
+        # Clear existing watchlist
+        self.watchlist = []
+        self.selected_symbols = []
+        # Save empty watchlist
+        self._save_watchlist()
+        logging.info("Watchlist cleared for new trading day")
+
+    def _run_fresh_scrip_proposal(self):
+        """Run fresh scrip proposal logic when market opens."""
+        logging.info("Running fresh scrip proposal for market open")
+
+        # Temporarily clear spot_open to force re-calculation
+        original_spot_open = self.spot_open
+        self.spot_open = None
+
+        # Re-run the options workflow with fresh market data
+        try:
+            self._sensex_options_workflow()
+            logging.info("Fresh scrip proposal completed successfully")
+        except Exception as e:
+            logging.error(f"Error during fresh scrip proposal: {e}")
+            # Restore original spot_open on error
+            self.spot_open = original_spot_open
+
+    def _start_periodic_refresh(self):
+        """Start background thread for periodic scrip evaluation during market hours."""
+        def refresh_worker():
+            logging.info("Periodic refresh thread started - checking every 30 minutes during market hours")
+            while True:
+                try:
+                    now = datetime.now()
+                    if self._is_market_hours(now) and self.market_opened_today:
+                        self._evaluate_and_propose_scrips()
+                    time.sleep(1800)  # Check every 30 minutes
+                except Exception as e:
+                    logging.error(f"Error in periodic refresh thread: {e}")
+                    time.sleep(60)  # Wait 1 minute before retrying
+
+        self.refresh_thread = threading.Thread(target=refresh_worker, daemon=True)
+        self.refresh_thread.start()
+        logging.info("Periodic refresh thread started")
+
+    def _is_market_hours(self, dt):
+        """Check if current time is within market hours (9:15 AM - 3:30 PM IST, weekdays)."""
+        if dt.weekday() >= 5:  # Saturday = 5, Sunday = 6
+            return False
+
+        market_start = dt.replace(hour=9, minute=15, second=0, microsecond=0)
+        market_end = dt.replace(hour=15, minute=30, second=0, microsecond=0)
+
+        return market_start <= dt <= market_end
+
+    def _evaluate_and_propose_scrips(self):
+        """Evaluate current market conditions and propose new scrips if criteria met."""
+        logging.info("Evaluating market conditions for new scrip proposals")
+
+        try:
+            # Check if we have enough data
+            if not self.spot_open or not self.watchlist:
+                logging.debug("Insufficient data for evaluation - skipping")
+                return
+
+            # Get current spot price
+            spot_symbol = f"{self.sensex_spot_token}_BSE"
+            spot_quote = self.quotes.get(spot_symbol, {})
+            current_spot = spot_quote.get('ltp', self.spot_open)
+
+            # Calculate new ATM strikes based on current spot
+            rounded_base = round(current_spot / 100) * 100
+            existing_strikes = {item['strike'] for item in self.watchlist if item.get('strike')}
+
+            # Look for strikes that moved significantly from current ATM
+            new_strikes_needed = []
+            for offset in [-600, -500, 500, 600]:  # Extended range strikes
+                strike = rounded_base + offset
+                if strike not in existing_strikes:
+                    new_strikes_needed.append((strike, 'CE' if offset > 0 else 'PE'))
+
+            if not new_strikes_needed:
+                logging.debug("No new strikes needed based on current market conditions")
+                return
+
+            # Check if any existing scrips have high volume/delta that might indicate trend
+            high_volume_scrips = []
+            for item in self.watchlist:
+                token = item['token']
+                quote = self.quotes.get(f"{token}_BFO", {})
+                volume = quote.get('volume', 0)
+                delta = quote.get('delta', 0)
+
+                # Criteria for high-potential scrips
+                if volume > 1000 and delta > 0.3:  # High volume and decent delta
+                    high_volume_scrips.append(item)
+
+            # If we have high volume scrips or significant spot movement, propose new strikes
+            spot_movement = abs(current_spot - self.spot_open) / self.spot_open
+            should_propose = len(high_volume_scrips) > 0 or spot_movement > 0.005  # 0.5% movement
+
+            if should_propose and len(new_strikes_needed) > 0:
+                logging.info(f"Market conditions met for new scrip proposals: {len(new_strikes_needed)} potential strikes")
+                self._propose_new_strikes(new_strikes_needed)
+            else:
+                logging.debug("Market conditions not met for new proposals")
+
+        except Exception as e:
+            logging.error(f"Error during scrip evaluation: {e}")
+
+    def _propose_new_strikes(self, new_strikes):
+        """Propose new strikes to add to watchlist."""
+        logging.info(f"Proposing {len(new_strikes)} new strikes for watchlist")
+
+        # For now, automatically add them (could be made interactive later)
+        added_count = 0
+        for strike, opt_type in new_strikes:
+            # Find token for this strike/type from existing data
+            # This is a simplified version - in practice you'd query the API
+            token = self._find_token_for_strike(strike, opt_type)
+            if token:
+                symbol = f"SENSEX_{strike}_{opt_type}"
+                new_item = {
+                    'strike': strike,
+                    'type': opt_type,
+                    'token': token,
+                    'symbol': symbol,
+                    'expiry': self._get_nearest_expiry()
+                }
+
+                # Check if not already in watchlist
+                existing_tokens = {item['token'] for item in self.watchlist}
+                if token not in existing_tokens:
+                    self.watchlist.append(new_item)
+                    added_count += 1
+                    logging.info(f"Added new strike: {strike} {opt_type}")
+
+        if added_count > 0:
+            self._save_watchlist()
+            # Re-subscribe to new symbols
+            self._subscribe_watchlist_options()
+            logging.info(f"Successfully added {added_count} new strikes to watchlist")
+        else:
+            logging.debug("No new strikes were added")
+
+    def _find_token_for_strike(self, strike, opt_type):
+        """Find token for a given strike and option type."""
+        # This is a simplified implementation
+        # In practice, you'd query the BSEOptions API or use cached data
+        # For now, return a mock token
+        return f"mock_token_{strike}_{opt_type}"
+
+    def _get_nearest_expiry(self):
+        """Get the nearest expiry date."""
+        today = datetime.now().date()
+        # Find next Thursday (weekly expiry)
+        days_to_thursday = (3 - today.weekday()) % 7
+        if days_to_thursday == 0:
+            days_to_thursday = 7
+        return today + timedelta(days=days_to_thursday)

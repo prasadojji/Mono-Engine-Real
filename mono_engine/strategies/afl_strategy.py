@@ -95,7 +95,8 @@ class AFLStrategy(BaseStrategy):
 
         if buy_now and not buy_prev and current_idx != self.last_entry_idx:
             self.last_entry_idx = current_idx
-            price = df['Open'].iloc[current_idx]  # Simple for now; we'll use PreFiveMinHigh later
+            # Use the high of the previous 5-min candle as entry price
+            price = df['FivePreFiveMinHigh'].iloc[current_idx] if 'FivePreFiveMinHigh' in df.columns else df['Open'].iloc[current_idx]
             print(f"ENTRY SIGNAL! Suggested price: {price}")
             return True, price
 

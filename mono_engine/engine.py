@@ -22,14 +22,19 @@ class MonoEngine:
         self.mode = 'real'  # Default mode; set in run_engine.py after prompt
 
     def _load_modules(self):
-        # Mapping for module_name to actual class name (adjust for your modules)
-        class_map = {
-            'portfolio': 'Portfolio',  # Assuming your existing portfolio.py class name
-            'state': 'StateModule',    # For state.py
-            'market_data': 'MarketData',
-            'strategy': 'StrategyModule',
-            'stoploss': 'StoplossModule'  
-            # Add others as needed; execution (order/paper) loaded conditionally
+        # Get stoploss strategy from config (default to AFL)
+        stoploss_strategy = self.config.get('stoploss_params', {}).get('strategy', 'afl')
+
+        # Mapping for module_name to (module_path, class_name)
+        # This allows different strategies to use different module files
+        module_map = {
+            'portfolio': ('mono_engine.modules.portfolio', 'Portfolio'),
+            'state': ('mono_engine.modules.state', 'StateModule'),
+            'market_data': ('mono_engine.modules.market_data', 'MarketData'),
+            'strategy': ('mono_engine.strategies.strategy', 'StrategyModule'),
+            'stoploss': ('mono_engine.modules.stoploss' if stoploss_strategy == 'afl' else 'mono_engine.modules.stoploss_2percent',
+                        'StoplossModule' if stoploss_strategy == 'afl' else 'Stoploss2PercentModule'),
+            'pnl': ('mono_engine.modules.pnl', 'PnLModule')
         }
 
         # Ensure the 'strategies' sub-package is on sys.path so relative imports work
@@ -39,22 +44,23 @@ class MonoEngine:
         if strategies_path not in sys.path:
             sys.path.insert(0, strategies_path)
             logging.debug(f"Added strategies path to sys.path: {strategies_path}")
-        
+
         for module_name in self.config.enabled_modules:
             if module_name == 'order':  # Skip; handled conditionally
                 continue
-            
+
             try:
-                # Special case for strategy (located in strategies/ folder, not modules/)
-                if module_name == 'strategy':
-                    module_path = "mono_engine.strategies.strategy"
+                # Get module path and class name from mapping
+                if module_name in module_map:
+                    module_path, class_name = module_map[module_name]
                 else:
+                    # Fallback for modules not in the map
                     module_path = f"mono_engine.modules.{module_name}"
-                
+                    class_name = None
+
                 module = importlib.import_module(module_path)
                 logging.info(f"Attempting to import module {module_name} from path: {module_path}")
-                class_name = class_map.get(module_name)
-                
+
                 if class_name and hasattr(module, class_name):
                     module_class = getattr(module, class_name)
                     module_instance = module_class(self)
@@ -62,7 +68,7 @@ class MonoEngine:
                     logging.info(f"Loaded module: {module_name} ({class_name})")
                 else:
                     logging.error(f"Module {module_name} has no class {class_name or 'unknown'}")
-            
+
             except Exception as e:
                 logging.error(f"Failed to load module {module_name}: {e}")
 

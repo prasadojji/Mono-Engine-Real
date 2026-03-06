@@ -13,6 +13,9 @@ class Config:
     """
 
     def __init__(self, data: Dict[str, Any]):
+        # Store the raw data for access to all config parameters
+        self._raw_data = data
+
         self.credentials = data.get('credentials', {})
         self.endpoints = data.get('endpoints', {
             'base_url': 'https://api.tradejini.com/v2',
@@ -41,6 +44,9 @@ class Config:
                 val = getattr(self, attr)
                 if isinstance(val, dict) and key in val:
                     return val.get(key, default)
+        # Check raw data for root-level parameters
+        if hasattr(self, '_raw_data') and key in self._raw_data:
+            return self._raw_data[key]
         return default
 
     @classmethod

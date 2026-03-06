@@ -15,22 +15,28 @@ enabled_modules:
   - market_data  # Uncomment if needed for scrip selection
   - strategy
   - stoploss
+  - pnl       # Real-time PnL tracking and signal publishing
   #- Charting
   # - risk         # For future
 
 # New params for modules 7/8 (options trading focus)
 scrip: OPTIDX_SENSEX_BFO_2026-02-12_84500_PE  # Test option symbol (replace with real)
 exchange_token: 12345     # Mock/real token from scrip selection (if needed; optional for now)
-lot_size: 50              # Default NIFTY lot size
+lot_size: 20              # Shares per lot
 retry_attempts: 3         # For order retries
 retry_delay: 1            # Seconds between retries
 
 logging_level: INFO
 
+# Dual strategy versioning for backtest caching
+strategy_versions:
+  buy_version: "Buy_AFL_v1.0"      # Increment when Buy_AFL_Python.py logic changes
+  sell_version: "Stoploss_2percent_v1.0"    # Use 2% strategy version
+
 other:
   # Custom settings for future use
   max_positions: 10
-  
+
 strategy_params:
   base_timeframe: 5min  # Change to 1min, 15min, etc. as needed
 
@@ -39,20 +45,37 @@ other:
   max_positions: 10
   scrip: OPTIDX_SENSEX_BFO_2026-02-12_84500_PE  # Test option symbol
   exchange_token: 12345     # Mock/real token (optional)
-  lot_size: 50              # Default NIFTY lot
+  lot_size: 20              # Shares per lot
   retry_attempts: 3
   retry_delay: 1
 
 stoploss_params:
-  initial_sl_pct: 0.02
-  breakeven_pct: 0.02
-  profit_lock_pct: 0.05
-  trail_start_pct: 0.08
-  atr_period: 14
-  atr_multiplier: 3.0
-  breach_base_streak: 3
-  breach_scale_factor: 0.5
-  profit_target_pct: 0.10
-  quantity: 900
+  # Strategy selection: 'afl' or '2percent'
+  strategy: 'afl'            # Change to '2percent' to use 2% profit strategy
+
+  # Configurable SL multipliers (entry * multiplier = stop level) - for AFL strategy
+  initial_sl_mult: 0.98      # 2% initial stop loss
+  breakeven_mult: 1.00       # Breakeven (entry price)
+  profit_lock_mult: 1.02     # 2% profit lock
+
+  # Configurable profit thresholds for stage progression (%) - for AFL strategy
+  breakeven_threshold: 2     # Move to breakeven after 2% profit
+  profit_lock_threshold: 5   # Move to profit lock after 5% profit
+  trail_start_threshold: 8   # Start trailing after 8% profit
+  profit_protect_threshold: 10 # 10% profit protection level
+
+  # 2% Strategy parameters
+  profit_target_pct: 2.0     # Minimum profit target (2%)
+  trail_buffer_pct: 2.0      # Exit if drops 2% from highest price
+
+  # Other parameters
+  ATRMult_Trail: 2.0         # ATR multiplier for trailing stops
+  required_streak: 3         # Consecutive bars/ticks for streak breach
+  post_exit_monitoring_minutes: 60  # Minutes to monitor after exit
+  quantity: 45
+
+backtest:
+  default_days: 30      # change to 60 or 90 anytime
+  max_days: 180
 
   

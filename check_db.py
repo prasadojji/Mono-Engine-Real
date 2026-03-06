@@ -1,36 +1,27 @@
 import sqlite3
 import pandas as pd
 
-DB_PATH = 'mono_engine_data.db'
+conn = sqlite3.connect('mono_engine_data.db')
 
-conn = sqlite3.connect(DB_PATH)
+# Check the structure of the trades table
+cursor = conn.cursor()
+cursor.execute("PRAGMA table_info(trades)")
+columns = cursor.fetchall()
+print("Trades table columns:")
+for col in columns:
+    print(f"  {col}")
 
-# Check if table exists and row count
-row_count = pd.read_sql("SELECT COUNT(*) as cnt FROM historical_1min", conn)['cnt'][0]
-print(f"Total rows in historical_1min: {row_count}")
+print("\nFirst 10 trades:")
+df = pd.read_sql("SELECT * FROM trades LIMIT 10", conn)
+print(df)
 
-if row_count > 0:
-    # Sample data
-    sample = pd.read_sql("SELECT * FROM historical_1min LIMIT 10", conn)
-    print("\nFirst 10 rows:")
-    print(sample)
-    
-    # Summary by symbol
-    summary = pd.read_sql("""
-        SELECT 
-            symbol,
-            MIN(timestamp) as earliest,
-            MAX(timestamp) as latest,
-            COUNT(*) as rows
-        FROM historical_1min
-        GROUP BY symbol
-        ORDER BY rows DESC
-        LIMIT 10
-    """, conn)
-    print("\nTop 10 symbols by row count:")
-    print(summary)
-
-else:
-    print("Table is empty or does not exist.")
+print("\nChecking for corrupted entry_price values:")
+corrupted_df = pd.read_sql("""
+    SELECT trade_id, symbol, entry_price, typeof(entry_price) as type
+    FROM trades
+    WHERE entry_price IN ('fixed_sl', 'strict_sl', 'profit_protect_10pct', 'immediate_sl')
+    LIMIT 20
+""", conn)
+print(corrupted_df)
 
 conn.close()

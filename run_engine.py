@@ -43,6 +43,24 @@ if engine.login():
     print(f"Selected mode: {mode.upper()}")
     engine.mode = mode
 
+    # Choose stoploss strategy
+    print("\nChoose stoploss strategy:")
+    print("1. afl (AFL-based dynamic stoploss)")
+    print("2. 2percent (2% profit target strategy)")
+    strategy_choice = input("Enter 1/2 (default: 1 afl): ").strip() or "1"
+
+    if strategy_choice == "2":
+        stoploss_strategy = "2percent"
+        print("Selected strategy: 2PERCENT (2% profit target)")
+    else:
+        stoploss_strategy = "afl"
+        print("Selected strategy: AFL (dynamic stoploss)")
+
+    # Update config with selected strategy
+    if 'stoploss_params' not in engine.config._raw_data:
+        engine.config._raw_data['stoploss_params'] = {}
+    engine.config._raw_data['stoploss_params']['strategy'] = stoploss_strategy
+
     logging.info(f"Engine authenticated — starting in {mode.upper()} mode")
 
     engine.streamer.start()
@@ -101,12 +119,13 @@ if engine.login():
         symbol = data.get('symbol') or data.get('subscribed_symbol')
         price = data.get('price')
         qty = data.get('quantity', 900)
+        buy_reason = data.get('buy_reason', 'unknown')
 
         if not symbol or price is None:
             logging.warning("buy_signal missing symbol or price")
             return
 
-        logging.info(f"Received buy_signal for {symbol} @ {price}")
+        logging.info(f"Received buy_signal for {symbol} @ {price} (reason: {buy_reason})")
 
         if state_module.is_in_trade(symbol):
             logging.info(f"Already IN_TRADE for {symbol} → ignoring")
@@ -119,18 +138,47 @@ if engine.login():
                     qty,
                     'buy',
                     order_type='market',
-                    price=price
+                    price=price,
+                    buy_reason=buy_reason
                 )
-                logging.info(f"✅ BUY ORDER SENT for {symbol} @ {price} (qty={qty})")
+                logging.info(f"✅ BUY ORDER SENT for {symbol} @ {price} (qty={qty}, reason={buy_reason})")
             except Exception as e:
                 logging.error(f"Execution failed for {symbol}: {e}")
         else:
             logging.error("No execution module loaded!")
 
-    engine.events.subscribe('buy_signal', handle_buy_signal)
-    logging.info("✅ buy_signal handler registered (PaperTrading compatible)")
+    def handle_exit_signal(data: dict):
+        symbol = data.get('symbol') or data.get('subscribed_symbol')
+        price = data.get('exit_price')  # Updated field name
+        qty = data.get('quantity', 900)
+        reason = data.get('reason', 'strategy_exit')
 
+        if not symbol or price is None:
+            logging.warning("exit_signal missing symbol or price")
+            return
+
+        logging.info(f"Received exit_signal for {symbol} @ {price} (reason: {reason})")
+
+        if execution_module:
+            try:
+                execution_module.place_order(
+                    symbol,
+                    qty,
+                    'sell',
+                    order_type='market',
+                    price=price,
+                    sell_reason=reason
+                )
+                logging.info(f"✅ SELL ORDER SENT for {symbol} @ {price} (qty={qty}, reason={reason})")
+            except Exception as e:
+                logging.error(f"Exit execution failed for {symbol}: {e}")
+        else:
+            logging.error("No execution module loaded!")
+
+    engine.events.subscribe('buy_signal', handle_buy_signal)
+    engine.events.subscribe('exit_signal', handle_exit_signal)
     logging.info("✅ buy_signal handler registered (PaperTrading compatible)")
+    logging.info("✅ exit_signal handler registered (PaperTrading compatible)")
     
     # ======================
     # HISTORICAL PNL REPLAY (NEW)
