@@ -88,6 +88,7 @@ class MarketData(BaseModule):
         self.amibroker = None  # Move this UP - before ami_bridge
         self.ami_bridge = AmiBridge() if self.amibroker else None  # Now safe
         self.amibroker_queue = Queue()  # For thread-safe pushes
+        self.market_opened_today = False  # Initialize missing attribute
 
         self.load_historical_candles()
         self.connect_amibroker()  # Call the new method below
@@ -202,6 +203,9 @@ class MarketData(BaseModule):
     def start(self):
         logging.info("MarketData starting — SENSEX options workflow (as in sensex_day_open_strikes.py)")
 
+        # Ensure ticks table exists with correct schema
+        self._ensure_ticks_table()
+
         # NEW: Check for day change and reset if needed
         self._check_day_change()
 
@@ -241,6 +245,33 @@ class MarketData(BaseModule):
         symbol = tick.get('symbol')
         if not symbol:
             return
+
+        # Store tick in database for debugging and historical analysis
+        try:
+            import sqlite3
+            conn = sqlite3.connect('mono_engine_data.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO ticks
+                (symbol, timestamp, ltp, volume, open, high, low, close, ltt, chng, chngPer)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                symbol,
+                datetime.now().isoformat(),
+                tick.get('ltp'),
+                tick.get('volume') or tick.get('vol'),
+                tick.get('open'),
+                tick.get('high'),
+                tick.get('low'),
+                tick.get('close') or tick.get('ltp'),
+                tick.get('ltt'),
+                tick.get('chng'),
+                tick.get('chngPer')
+            ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logging.error(f"Failed to store tick for {symbol}: {e}")
 
         self.quotes[symbol].update(tick)
 
@@ -1400,6 +1431,35 @@ class MarketData(BaseModule):
         # In practice, you'd query the BSEOptions API or use cached data
         # For now, return a mock token
         return f"mock_token_{strike}_{opt_type}"
+
+    def _ensure_ticks_table(self):
+        """Ensure the ticks table exists with correct schema."""
+        try:
+            conn = sqlite3.connect('mono_engine_data.db')
+            cursor = conn.cursor()
+
+            # Create ticks table with correct schema if it doesn't exist
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ticks (
+                    symbol TEXT,
+                    timestamp TEXT,
+                    ltp REAL,
+                    volume REAL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    ltt REAL,
+                    chng REAL,
+                    chngPer REAL
+                )
+            ''')
+
+            conn.commit()
+            conn.close()
+            logging.info("Ticks table verified/created successfully")
+        except Exception as e:
+            logging.error(f"Failed to create ticks table: {e}")
 
     def _get_nearest_expiry(self):
         """Get the nearest expiry date."""

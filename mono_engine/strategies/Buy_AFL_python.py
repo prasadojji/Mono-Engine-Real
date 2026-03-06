@@ -358,7 +358,7 @@ class Buy_AFL_python(BaseStrategy):
 
     def should_enter(self) -> Tuple[bool, float | None, str]:
         """Return (enter_signal, price, buy_reason) for PnL tracking"""
-        if len(self.resampled_df) < 2:
+        if len(self.resampled_df) < 3:  # Need at least 3 bars to access previous bar's high
             return False, None, 'unknown'
 
         current_ma1 = self.resampled_df['MA1'].iloc[-1]
@@ -366,7 +366,7 @@ class Buy_AFL_python(BaseStrategy):
 
         if current_ma1 and not prev_ma1:
             reason = self._get_buy_reason()
-            price  = self.resampled_df['High'].iloc[-1]
+            price  = self.resampled_df['High'].iloc[-2]  # Use previous 5-min bar's High as entry price
             return True, price, reason
 
         return False, None, 'unknown'

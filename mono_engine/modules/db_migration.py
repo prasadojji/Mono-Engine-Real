@@ -3,7 +3,7 @@ import sqlite3
 conn = sqlite3.connect('mono_engine_data.db')
 c = conn.cursor()
 
-print("🔧 Running safe migration...")
+print("Running safe migration...")
 
 # Check existing columns
 c.execute("PRAGMA table_info(trades)")

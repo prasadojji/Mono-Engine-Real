@@ -58,8 +58,106 @@ class StrategyModule(BaseModule):
             params['base_timeframe'] = self.base_timeframe  # Pass to strategy
             self.strategies[symbol] = self.strategy_class(params=params)
             self.strategies[symbol].debug = True  # Enable reasons logging
+
+            # NEW: Pre-populate strategy with historical data from database
+            self._preload_historical_data(symbol)
+
             self.logger.info(f"Created {self.strategy_class.__name__} instance for symbol: {symbol}")
         return self.strategies[symbol]
+
+    def _preload_historical_data(self, symbol: str):
+        """Load recent historical data from database to give strategy immediate context."""
+        try:
+            import sqlite3
+            conn = sqlite3.connect('mono_engine_data.db')
+            cursor = conn.cursor()
+
+            # Map watchlist symbol to historical database symbol
+            historical_symbol = self._map_symbol_to_historical(symbol)
+
+            # Get last 200 bars for this symbol to give strategy historical context
+            cursor.execute('''
+                SELECT timestamp, open, high, low, close, volume
+                FROM historical_1min
+                WHERE symbol = ?
+                ORDER BY timestamp DESC
+                LIMIT 200
+            ''', (historical_symbol,))
+
+            historical_bars = cursor.fetchall()
+            conn.close()
+
+            if historical_bars:
+                # Convert to DataFrame and feed to strategy
+                import pandas as pd
+                df_hist = pd.DataFrame(historical_bars,
+                                     columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+
+                # FIX: Handle timezone-aware timestamps properly
+                try:
+                    # Convert timezone-aware strings to timezone-naive datetimes
+                    # First, parse as timezone-aware, then convert to naive
+                    df_hist['timestamp'] = pd.to_datetime(df_hist['timestamp'], utc=True).tz_convert('Asia/Kolkata').tz_localize(None)
+                    df_hist = df_hist.set_index('timestamp').sort_index()
+
+                    # Feed historical data to strategy
+                    self.strategies[symbol].on_data_update({'1min': df_hist})
+                    self.logger.info(f"Pre-populated {symbol} strategy with {len(df_hist)} historical bars (mapped from {symbol} to {historical_symbol})")
+                except Exception as e:
+                    self.logger.warning(f"Failed to parse timestamps for {symbol}: {e}")
+                    # Fallback: strip timezone info manually and parse
+                    try:
+                        # Remove timezone info from string and parse
+                        df_hist['timestamp'] = df_hist['timestamp'].str.replace(r'\+.*$', '', regex=True)
+                        df_hist['timestamp'] = pd.to_datetime(df_hist['timestamp'])
+                        df_hist = df_hist.set_index('timestamp').sort_index()
+                        self.strategies[symbol].on_data_update({'1min': df_hist})
+                        self.logger.info(f"Pre-populated {symbol} strategy with {len(df_hist)} historical bars (manual timezone strip)")
+                    except Exception as e2:
+                        self.logger.warning(f"Could not load historical data for {symbol}: {e2}")
+            else:
+                self.logger.debug(f"No historical data found for {symbol} (tried {historical_symbol})")
+
+        except Exception as e:
+            self.logger.warning(f"Could not load historical data for {symbol}: {e}")
+
+    def _map_symbol_to_historical(self, watchlist_symbol: str) -> str:
+        """Map watchlist symbol (token_BFO) to historical database symbol name."""
+        # Extract token from watchlist symbol (remove _BFO suffix)
+        if '_BFO' in watchlist_symbol:
+            token = watchlist_symbol.replace('_BFO', '')
+        elif '_BSE' in watchlist_symbol:
+            token = watchlist_symbol.replace('_BSE', '')
+        else:
+            return watchlist_symbol  # Return as-is if no mapping needed
+
+        # Get watchlist to find the descriptive symbol name
+        market_data = self.engine.modules.get('market_data')
+        if market_data and hasattr(market_data, 'watchlist'):
+            for item in market_data.watchlist:
+                if str(item.get('token', '')) == token:
+                    # Return the symbol field which should match historical database
+                    symbol_name = item.get('symbol')
+                    if symbol_name:
+                        return symbol_name
+
+        # Fallback: try to find in historical_symbols.json
+        try:
+            import json
+            with open('historical_symbols.json', 'r') as f:
+                historical_symbols = json.load(f)
+
+            # Look for symbol with matching token in ID
+            for hist_item in historical_symbols:
+                hist_id = hist_item.get('id', '')
+                if token in hist_id:
+                    return hist_item.get('symbol', watchlist_symbol)
+
+        except Exception as e:
+            self.logger.debug(f"Could not load historical_symbols.json for mapping: {e}")
+
+        # Final fallback: return original symbol
+        return watchlist_symbol
 
     def _on_tick(self, tick: Dict):
         symbol = tick.get('symbol')
@@ -94,10 +192,13 @@ class StrategyModule(BaseModule):
                     'Close': data['close'],
                     'Volume': data['volume']
                 }], index=[data['current_time']])
-                
+
                 strategy = self._get_or_create_strategy(symbol)
                 strategy.on_data_update({'1min': df_1min})
-                
+
+                # Debug: Log strategy data accumulation
+                self.logger.info(f"Strategy {symbol}: {len(strategy.resampled_df)} bars accumulated")
+
                 # === CRITICAL FIX: Publish 1min_bar_closed so StoplossModule runs ===
                 bar_data = {
                     'symbol': symbol,
@@ -111,7 +212,7 @@ class StrategyModule(BaseModule):
                     }
                 }
                 self.events.publish('1min_bar_closed', bar_data)
-                
+
                 self._check_and_publish_signals(symbol)
                 self.logger.debug(f"Fed 1min candle + published '1min_bar_closed' for {symbol} @ {data['current_time']}")
 
